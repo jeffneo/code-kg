@@ -430,6 +430,61 @@ That is the honest limit of this harness, and it generalises: a metric can only
 catch errors its granularity can express. The over-match was caught by *looking
 at the output*, not by the score. Budget for both.
 
+## Org-level GDS
+
+```bash
+make gds
+```
+
+Requires GDS Enterprise. 166,375 nodes and 812,132 relationships project and
+run all four algorithms in **8 seconds**.
+
+The projection is deliberately heterogeneous — Symbol *and* File. Symbol→Symbol
+edges alone barely cross repo boundaries, because only CodeGraph's artifact
+supports symbol-level cross-repo calls; the bulk of the cross-repo signal is
+`IMPORTS_CROSS_REPO`, which runs File→Symbol. Undirected throughout, since
+Leiden and articulationPoints require it.
+
+### Q12 — subsystems that cross repo boundaries
+
+GitNexus and Graphify both run Leiden. Per repo. Same algorithm, but a per-repo
+projection can only ever return intra-repo communities — the answer is
+constrained by the projection, not by the clustering.
+
+Over the joined graph: 6,305 communities at modularity 0.879, of which **24 span
+more than one repo**, covering ~94,000 symbols:
+
+```
+repos spanned   communities   symbols
+      4               3        12,893
+      3               9        37,567
+      2              12        43,530
+```
+
+The largest spans all four Go repos (9,158 symbols across mimir, dskit, loki,
+tempo). Another spans the Python chain — driver, langchain-neo4j, graphrag.
+These are the organisation's real subsystems, irrespective of how the code is
+filed into repositories.
+
+### Q13 — org-level chokepoints
+
+Betweenness over the whole estate. `neo4j.Driver` at 4.79M, `dskit.InjectOrgID`
+at 3.24M.
+
+Worth showing as corroboration rather than coincidence: **Q4 independently ranks
+`InjectOrgID` first by cross-repo fan-in.** Two unrelated measures, same answer.
+
+### Q14 — fragile seams
+
+Articulation points — nodes whose removal splits the graph — filtered to those
+consumed by two or more repos. Every one on the loaded corpora sits inside
+dskit, led by `flagext.StringSliceCSV` (3 consuming repos).
+
+Two gotchas worth knowing: `gds.articulationPoints` writes an **INTEGER (0/1),
+not a boolean**, so predicates need `> 0`; and PageRank does not converge in 20
+iterations on this graph — the ranking is stable but raise `maxIterations` if
+you intend to quote the scores.
+
 ## Q8 — the finding worth showing
 
 `make score` surfaced a real defect in Neo4j's own code. `llm-graph-builder`

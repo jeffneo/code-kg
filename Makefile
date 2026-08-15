@@ -24,6 +24,7 @@ help:
 	@echo "  make link                  run the cross-repo resolution pass"
 	@echo "  make demo SYM=<symbol-id>  blast radius, joined vs single-repo"
 	@echo "  make score CORPUS=a        precision/recall vs source-derived truth"
+	@echo "  make gds                   org-level Leiden / betweenness / articulation points"
 	@echo ""
 	@echo ""
 	@echo "  make nes                   start Neo4j Enterprise Studio (Query + Bloom)"
@@ -143,6 +144,9 @@ demo:
 	@echo ""
 	@echo "=== Q3: evidence - shortest concrete path per impacted repo ==="
 	@$(COMPOSE) run --rm -T loader query q3 --param "changed=$(SYM)" </dev/null
+
+gds:
+	@$(COMPOSE) run --rm -T loader gds </dev/null
 
 score:
 	$(COMPOSE) run --rm -T loader score $(CORPUS) --json /artifacts/score-$(CORPUS).json </dev/null

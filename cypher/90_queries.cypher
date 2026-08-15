@@ -308,3 +308,69 @@ RETURN CASE votes WHEN 3 THEN 'corroborated by all three'
                   ELSE 'single extractor - verify' END AS evidence,
        count(DISTINCT path) AS impacted_files
 ORDER BY evidence;
+
+
+// ----------------------------------------------------------------------------
+// Q12 - SUBSYSTEMS THAT CROSS REPO BOUNDARIES   (requires `make gds`)
+//
+// GitNexus and Graphify both run Leiden. Per repo. Same algorithm, but a
+// per-repo projection can only ever return intra-repo communities - the answer
+// is constrained by the projection, not by the clustering.
+//
+// Over the joined graph the question changes kind: which subsystems does this
+// organisation actually have, irrespective of how the code is filed into
+// repositories? On the loaded corpora, 24 communities span more than one repo.
+// ----------------------------------------------------------------------------
+MATCH (s:Symbol) WHERE s.communityId IS NOT NULL
+WITH s.communityId AS community,
+     collect(DISTINCT split(s.repo, '/')[-1]) AS repos,
+     count(*) AS members
+WHERE size(repos) > 1
+RETURN community, members, size(repos) AS repos_spanned, repos
+ORDER BY repos_spanned DESC, members DESC
+LIMIT 20;
+
+
+// ----------------------------------------------------------------------------
+// Q13 - ORG-LEVEL CHOKEPOINTS   (requires `make gds`)
+//
+// Betweenness over the whole estate: the symbols the most shortest paths run
+// through. Distinct from raw fan-in - a broker can have few callers and still
+// sit on every route between two subsystems.
+//
+// Worth noting as corroboration rather than coincidence: dskit's InjectOrgID
+// ranks near the top here, and Q4 independently ranks it first by cross-repo
+// fan-in. Two different measures, same answer.
+// ----------------------------------------------------------------------------
+MATCH (s:Symbol) WHERE s.betweenness > 0
+RETURN split(s.repo, '/')[-1] AS repo,
+       s.qname                AS symbol,
+       s.path                 AS defined_in,
+       round(s.betweenness)   AS betweenness,
+       s.communityId          AS community
+ORDER BY s.betweenness DESC
+LIMIT 20;
+
+
+// ----------------------------------------------------------------------------
+// Q14 - FRAGILE SEAMS   (requires `make gds`)
+//
+// Articulation points - nodes whose removal splits the graph into more
+// components - filtered to those consumed by two or more repos. These are the
+// single points of structural failure for the estate, and every one on the
+// loaded corpora sits inside dskit.
+//
+// NOTE: gds.articulationPoints writes an INTEGER (0/1), not a boolean, so this
+// compares with `> 0` rather than testing truthiness.
+// ----------------------------------------------------------------------------
+MATCH (s:Symbol) WHERE s.isArticulationPoint > 0
+MATCH (s)<-[:CALLS_CROSS_REPO|IMPORTS_CROSS_REPO]-(consumer)
+WITH s, count(DISTINCT consumer.repo) AS consuming_repos
+WHERE consuming_repos >= 2
+RETURN split(s.repo, '/')[-1]        AS defined_in,
+       s.qname                       AS symbol,
+       s.path                        AS path,
+       consuming_repos,
+       round(coalesce(s.betweenness, 0)) AS betweenness
+ORDER BY consuming_repos DESC, betweenness DESC
+LIMIT 20;

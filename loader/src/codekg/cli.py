@@ -192,6 +192,15 @@ def cmd_enrich(args: argparse.Namespace) -> None:
             print(f"  {spec['id']}: {n} source-derived import refs")
 
 
+def cmd_gds(args: argparse.Namespace) -> None:
+    """Run org-level graph algorithms over the joined graph."""
+    with db.store() as store:
+        results = store.run_script("/cypher/20_gds.cypher")
+    for rows in results:
+        for row in rows:
+            print("  " + "  ".join(f"{k}={v}" for k, v in row.items()))
+
+
 def cmd_link(args: argparse.Namespace) -> None:
     with db.store() as store:
         results = store.run_script("/cypher/10_link_cross_repo.cypher")
@@ -367,6 +376,8 @@ def main() -> None:
     p.set_defaults(fn=cmd_enrich)
 
     sub.add_parser("link", help="run the cross-repo resolution pass").set_defaults(fn=cmd_link)
+
+    sub.add_parser("gds", help="org-level GDS over the joined graph").set_defaults(fn=cmd_gds)
 
     p = sub.add_parser("query", help="run a demo query (q1..q7)")
     p.add_argument("name")
