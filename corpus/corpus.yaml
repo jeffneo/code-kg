@@ -1,0 +1,106 @@
+# Source corpora for the multi-repo code knowledge graph harness.
+#
+# Two corpora, chosen for different jobs:
+#   A (neo4j-python) - credibility + fast iteration + eyeball-validatable
+#   B (grafana-go)   - exact, machine-checkable ground truth from go.mod
+#
+# `publishes` is the package identity this repo produces. It is the join key
+# for cross-repo resolution: another repo's unresolved import of this name
+# resolves to a symbol in this repo.
+#
+# `ref` is a branch or tag for the FIRST fetch only. fetch.sh resolves it to a
+# commit SHA and writes corpus.lock.yaml. After that the SHA is authoritative.
+# Ground truth is version-specific; a dependency bump silently invalidates scores.
+
+corpora:
+  a:
+    name: neo4j-python
+    description: >
+      Neo4j's own Python dependency DAG. Two hops deep with fan-in at the top.
+      Roughly 100-150k LOC total, so the extract/load/query loop stays fast.
+    ecosystem: python
+    repos:
+      - id: neo4j-python-driver
+        url: https://github.com/neo4j/neo4j-python-driver
+        ref: 6.x                 # default branch; 5.x exists as tags, not a branch
+        publishes: [neo4j]
+        tier: core
+
+      # Owned by langchain-ai, not neo4j - worth knowing before you describe
+      # this corpus as "all Neo4j code". It is still the real dependency:
+      # llm-graph-builder pins langchain-neo4j==0.10.0, and the package source
+      # lives under libs/neo4j rather than the repo root.
+      - id: langchain-neo4j
+        url: https://github.com/langchain-ai/langchain-neo4j
+        ref: main
+        publishes: [langchain-neo4j]
+        subpath: libs/neo4j
+        tier: core
+
+      - id: graph-data-science-client
+        url: https://github.com/neo4j/graph-data-science-client
+        ref: main
+        publishes: [graphdatascience]
+        tier: core
+
+      - id: neo4j-graphrag-python
+        url: https://github.com/neo4j/neo4j-graphrag-python
+        ref: main
+        publishes: [neo4j-graphrag]
+        tier: core
+
+      - id: llm-graph-builder
+        url: https://github.com/neo4j-labs/llm-graph-builder
+        ref: main
+        publishes: []          # top of the DAG, consumer only
+        subpath: backend       # the Python app lives here
+        tier: core
+
+  b:
+    name: grafana-go
+    description: >
+      grafana/dskit consumed by the LGTM stack. Go import paths are fully
+      qualified and name the publishing repo, so the answer key is exact and
+      free. One-to-many fan-out makes the blast-radius query land visually.
+    ecosystem: go
+    repos:
+      - id: dskit
+        url: https://github.com/grafana/dskit
+        ref: main
+        publishes: [github.com/grafana/dskit]
+        tier: core
+
+      - id: mimir
+        url: https://github.com/grafana/mimir
+        ref: main
+        publishes: [github.com/grafana/mimir]
+        tier: core           # smallest of the three consumers; the "lite" consumer
+
+      - id: loki
+        url: https://github.com/grafana/loki
+        ref: main
+        publishes: [github.com/grafana/loki/v3]
+        tier: full
+
+      - id: tempo
+        url: https://github.com/grafana/tempo
+        ref: main
+        publishes: [github.com/grafana/tempo]
+        tier: full
+
+# Generated code inflates node counts and wrecks centrality metrics - your
+# "god nodes" become generated deep-copy functions. Excluded at extract time.
+exclude:
+  globs:
+    - "**/vendor/**"
+    - "**/node_modules/**"
+    - "**/testdata/**"
+    - "**/*.pb.go"
+    - "**/*_generated.go"
+    - "**/zz_generated*.go"
+    - "**/*_pb2.py"
+    - "**/*_pb2_grpc.py"
+    - "**/generated/**"
+    - "**/.venv/**"
+    - "**/dist/**"
+    - "**/build/**"

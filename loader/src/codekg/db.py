@@ -1,0 +1,208 @@
+"""Neo4j write path.
+
+Everything is MERGE on a deterministic id and batched through UNWIND. Two
+consequences that matter:
+
+  - Re-running a load is a no-op rather than a duplicate.
+  - The same node arriving from a second extractor updates the `extractors`
+    list rather than creating a parallel node, which is what makes the
+    agreement matrix a single property read instead of a second pipeline.
+"""
+
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from typing import Any, Iterable, Iterator
+
+from neo4j import GraphDatabase
+
+
+BATCH = 5_000
+
+
+class Store:
+    def __init__(self, uri: str | None = None, user: str | None = None, password: str | None = None):
+        self._driver = GraphDatabase.driver(
+            uri or os.environ["NEO4J_URI"],
+            auth=(
+                user or os.environ.get("NEO4J_USER", "neo4j"),
+                password or os.environ["NEO4J_PASSWORD"],
+            ),
+        )
+
+    def close(self) -> None:
+        self._driver.close()
+
+    def verify(self) -> None:
+        self._driver.verify_connectivity()
+
+    def run_script(self, path: str) -> list[list[dict[str, Any]]]:
+        """Execute a semicolon-delimited .cypher file, statement by statement.
+
+        Naive splitting on ';' is fine for these files - they contain no string
+        literals with semicolons. If that stops being true, this needs a real
+        lexer rather than a bigger regex.
+        """
+        with open(path) as fh:
+            body = fh.read()
+
+        results = []
+        for raw in body.split(";"):
+            stmt = "\n".join(
+                line for line in raw.splitlines() if not line.strip().startswith("//")
+            ).strip()
+            if not stmt:
+                continue
+            with self._driver.session() as session:
+                results.append([dict(r) for r in session.run(stmt)])
+        return results
+
+    def query(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
+        with self._driver.session() as session:
+            return [dict(r) for r in session.run(cypher, **params)]
+
+    def write_batched(self, cypher: str, rows: Iterable[dict[str, Any]]) -> int:
+        total = 0
+        for chunk in _chunks(rows, BATCH):
+            with self._driver.session() as session:
+                session.execute_write(lambda tx: tx.run(cypher, batch=chunk).consume())
+            total += len(chunk)
+        return total
+
+
+# --- MERGE statements for the canonical schema -------------------------------
+#
+# `extractors` accumulates rather than overwrites. That single decision is what
+# turns triangulation from a separate pipeline into a property read: an edge
+# seen by all three tools has size(r.extractors) = 3, one seen by a single tool
+# has 1, and the agreement matrix is a GROUP BY.
+
+MERGE_REPO = """
+UNWIND $batch AS row
+MERGE (r:Repo {id: row.id})
+  SET r.name       = row.name,
+      r.url        = row.url,
+      r.commit     = row.commit,
+      r.ecosystem  = row.ecosystem,
+      r.corpus     = row.corpus,
+      r.extractors = coll.distinct(coalesce(r.extractors, []) + row.extractor)
+"""
+
+MERGE_PACKAGE = """
+UNWIND $batch AS row
+MERGE (p:Package {id: row.id})
+  SET p.name = row.name, p.ecosystem = row.ecosystem
+WITH p, row
+MATCH (r:Repo {id: row.repo})
+FOREACH (_ IN CASE WHEN row.relation = 'PUBLISHES' THEN [1] ELSE [] END |
+  MERGE (r)-[:PUBLISHES]->(p))
+FOREACH (_ IN CASE WHEN row.relation = 'DEPENDS_ON' THEN [1] ELSE [] END |
+  MERGE (r)-[d:DEPENDS_ON]->(p)
+    SET d.version_spec = row.version_spec, d.source = row.source)
+"""
+
+MERGE_FILE = """
+UNWIND $batch AS row
+MERGE (f:File {id: row.id})
+  SET f.path       = row.path,
+      f.repo       = row.repo,
+      f.language   = row.language,
+      f.extractors = coll.distinct(coalesce(f.extractors, []) + row.extractor)
+WITH f, row
+MATCH (r:Repo {id: row.repo})
+MERGE (r)-[:CONTAINS]->(f)
+"""
+
+MERGE_SYMBOL = """
+UNWIND $batch AS row
+MERGE (s:Symbol {id: row.id})
+  SET s.name       = row.name,
+      s.qname      = row.qname,
+      s.kind       = row.kind,
+      s.path       = row.path,
+      s.repo       = row.repo,
+      s.start_line = row.start_line,
+      s.end_line   = row.end_line,
+      s.exported   = row.exported,
+      s.docstring  = row.docstring,
+      s.extractors = coll.distinct(coalesce(s.extractors, []) + row.extractor)
+WITH s, row
+MATCH (r:Repo {id: row.repo})
+MERGE (s)-[:IN_REPO]->(r)
+WITH s, row
+MATCH (f:File {id: row.file})
+MERGE (f)-[:DECLARES]->(s)
+"""
+
+MERGE_CALLS = """
+UNWIND $batch AS row
+MATCH (src:Symbol {id: row.src})
+MATCH (dst:Symbol {id: row.dst})
+MERGE (src)-[c:CALLS]->(dst)
+  SET c.extractors = coll.distinct(coalesce(c.extractors, []) + row.extractor),
+      c.confidence = coalesce(row.confidence, c.confidence),
+      c.evidence   = coalesce(row.evidence, c.evidence)
+"""
+
+MERGE_EXTERNAL_REF = """
+UNWIND $batch AS row
+MERGE (e:ExternalRef {id: row.id})
+  SET e.module      = row.module,
+      e.root_module = row.root_module,
+      e.symbol      = row.symbol,
+      e.ecosystem   = row.ecosystem,
+      e.extractors  = coll.distinct(coalesce(e.extractors, []) + row.extractor)
+WITH e, row
+MATCH (src:Symbol {id: row.src})
+MERGE (src)-[u:USES]->(e)
+  SET u.extractors = coll.distinct(coalesce(u.extractors, []) + row.extractor)
+"""
+
+# Source-derived imports land on the File, not a Symbol - the file is the
+# granularity at which an import can be attributed without redoing call
+# resolution. See enrich.py.
+MERGE_FILE_EXTERNAL_REF = """
+UNWIND $batch AS row
+MERGE (e:ExternalRef {id: row.id})
+  SET e.module      = row.module,
+      e.root_module = row.root_module,
+      e.symbol      = row.symbol,
+      e.ecosystem   = row.ecosystem,
+      e.extractors  = coll.distinct(coalesce(e.extractors, []) + row.extractor)
+WITH e, row
+MATCH (f:File {id: row.file})
+MERGE (f)-[u:IMPORTS_EXT]->(e)
+  SET u.line       = row.line,
+      u.extractors = coll.distinct(coalesce(u.extractors, []) + row.extractor)
+"""
+
+DELETE_REPO_SUBGRAPH = """
+MATCH (r:Repo {id: $repo})
+OPTIONAL MATCH (r)-[:CONTAINS]->(f:File)
+OPTIONAL MATCH (f)-[:DECLARES]->(s:Symbol)
+DETACH DELETE f, s
+WITH r
+DETACH DELETE r
+"""
+
+
+@contextmanager
+def store(**kwargs: Any) -> Iterator[Store]:
+    s = Store(**kwargs)
+    try:
+        s.verify()
+        yield s
+    finally:
+        s.close()
+
+
+def _chunks(rows: Iterable[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
+    buf: list[dict[str, Any]] = []
+    for row in rows:
+        buf.append(row)
+        if len(buf) >= size:
+            yield buf
+            buf = []
+    if buf:
+        yield buf

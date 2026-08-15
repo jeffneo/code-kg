@@ -1,0 +1,33 @@
+# --- secrets: never commit ---------------------------------------------------
+# License keys and local credentials. The harness assumes these exist at the
+# repo root but they are supplied out-of-band, not versioned. See the README.
+*.license
+*.lic
+.env
+.env.local
+
+# --- corpus checkouts --------------------------------------------------------
+# ~1.1 GB of cloned OSS repos. Reproducible from corpus/corpus.yaml +
+# corpus/corpus.lock.yaml, which ARE committed - the lock file is the pinning
+# record and the whole basis for the scores being reproducible.
+corpus/src/
+
+# --- build and runtime junk --------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Extractor working state, if anything ever lands in-tree rather than in the
+# docker volumes.
+.gitnexus/
+.codegraph/
+graphify-out/
+
+# --- os ----------------------------------------------------------------------
+.DS_Store
