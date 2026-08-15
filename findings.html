@@ -1,0 +1,505 @@
+<title>Twelve Files, or 266</title>
+<style>
+  /* ---- tokens: light is the base, both themes defined at token level ---- */
+  :root {
+    --ground:   #F5F7F9;
+    --surface:  #FFFFFF;
+    --sunken:   #EDF1F4;
+    --ink:      #111A23;
+    --muted:    #5C6B79;
+    --faint:    #8A98A5;
+    --rule:     #D9E0E7;
+    --cross:    #C81E5A;   /* reserved: cross-repo only */
+    --cross-bg: #FBE9EF;
+    --caution:  #A9691F;
+    --caution-bg:#FBF1E3;
+    --shadow:   0 1px 2px rgba(17,26,35,.05), 0 8px 24px rgba(17,26,35,.05);
+
+    --serif: Georgia, "Iowan Old Style", "Times New Roman", ui-serif, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #0D131A;
+      --surface:  #141D26;
+      --sunken:   #101822;
+      --ink:      #E3EAF1;
+      --muted:    #92A3B2;
+      --faint:    #6B7C8B;
+      --rule:     #24313D;
+      --cross:    #FF6E9B;
+      --cross-bg: #2A1520;
+      --caution:  #DEA758;
+      --caution-bg:#251C0F;
+      --shadow:   0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:   #0D131A;
+    --surface:  #141D26;
+    --sunken:   #101822;
+    --ink:      #E3EAF1;
+    --muted:    #92A3B2;
+    --faint:    #6B7C8B;
+    --rule:     #24313D;
+    --cross:    #FF6E9B;
+    --cross-bg: #2A1520;
+    --caution:  #DEA758;
+    --caution-bg:#251C0F;
+    --shadow:   0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16.5px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 1.25rem 6rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 47rem; margin: 0 auto; }
+  section { max-width: 40rem; }
+
+  /* ---- masthead ---- */
+  header { padding: 4.5rem 0 2.5rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--faint); margin: 0 0 1.5rem;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(2.6rem, 7vw, 4.1rem); line-height: 1.02;
+    letter-spacing: -.025em; margin: 0 0 1.25rem; text-wrap: balance;
+  }
+  h1 em { font-style: normal; color: var(--cross); }
+  .standfirst {
+    font-size: 1.15rem; color: var(--muted); margin: 0; max-width: 34rem;
+    text-wrap: pretty;
+  }
+
+  /* ---- run metadata strip ---- */
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 0 2.25rem;
+    border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+    padding: 1rem 0; margin: 2.75rem 0 0;
+    font-family: var(--mono); font-size: .78rem;
+  }
+  .meta div { display: flex; flex-direction: column; gap: .15rem; }
+  .meta dt { color: var(--faint); letter-spacing: .06em; text-transform: uppercase; font-size: .68rem; }
+  .meta dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  h2 {
+    font-family: var(--serif); font-weight: 400; font-size: 1.95rem;
+    letter-spacing: -.015em; line-height: 1.2; margin: 4.5rem 0 .5rem;
+    text-wrap: balance;
+  }
+  h2 + .lede { color: var(--muted); margin: 0 0 1.75rem; }
+  h3 {
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--faint); font-weight: 600;
+    margin: 2.5rem 0 .75rem;
+  }
+  p { margin: 0 0 1.1rem; }
+  strong { font-weight: 650; }
+  code {
+    font-family: var(--mono); font-size: .87em;
+    background: var(--sunken); padding: .1em .35em; border-radius: 3px;
+  }
+
+  /* ---- the recurring device: one tool vs the joined graph ---- */
+  .split {
+    display: grid; grid-template-columns: 1fr auto 1.55fr; align-items: center;
+    gap: 0 1.5rem; background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 1.75rem; margin: 1.75rem 0;
+    box-shadow: var(--shadow);
+  }
+  .split .arm { display: flex; flex-direction: column; gap: .4rem; }
+  .split .label {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .split .fig {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    font-size: 2.5rem; line-height: 1; letter-spacing: -.03em;
+  }
+  .split .arm.joined .fig { color: var(--cross); font-size: 3.4rem; }
+  .split .note { font-size: .82rem; color: var(--muted); line-height: 1.45; }
+  .split .to {
+    font-family: var(--mono); color: var(--faint); font-size: 1.1rem;
+    align-self: center;
+  }
+  @media (max-width: 34rem) {
+    .split { grid-template-columns: 1fr; gap: 1.25rem; }
+    .split .to { display: none; }
+  }
+
+  figure { margin: 2rem 0; }
+  figcaption {
+    font-size: .82rem; color: var(--muted); margin-top: .85rem;
+    padding-left: .9rem; border-left: 2px solid var(--rule);
+  }
+
+  /* ---- data tables ---- */
+  .scroll { overflow-x: auto; margin: 1.5rem 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+  th, td {
+    text-align: left; padding: .6rem .8rem .6rem 0;
+    border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  th {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--faint); font-weight: 600;
+    border-bottom-width: 1px;
+  }
+  td.num {
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+    text-align: right; padding-right: 1.1rem;
+  }
+  td.name { font-family: var(--mono); font-size: .82rem; }
+  tr.hi td { background: var(--cross-bg); }
+  tr.hi td.name, tr.hi td.num { color: var(--cross); font-weight: 600; }
+
+  /* recall bar: a figure you can read at a glance */
+  .bar { display: flex; align-items: center; gap: .6rem; }
+  .bar .track {
+    width: 76px; height: 5px; background: var(--sunken);
+    border-radius: 3px; overflow: hidden; flex: none;
+  }
+  .bar .fill { display: block; height: 100%; background: var(--faint); }
+  tr.hi .bar .fill { background: var(--cross); }
+
+  ul { margin: 0 0 1.1rem; padding-left: 1.1rem; }
+  li { margin-bottom: .5rem; }
+  li::marker { color: var(--faint); }
+
+  .callout {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 1.4rem 1.5rem; margin: 1.75rem 0;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--cross); display: block;
+    margin-bottom: .6rem;
+  }
+  .callout.warn { background: var(--caution-bg); border-color: transparent; }
+  .callout.warn .label { color: var(--caution); }
+
+  .cite {
+    font-family: var(--mono); font-size: .78rem; color: var(--muted);
+    background: var(--sunken); border-radius: 4px; padding: .85rem 1rem;
+    margin: 1.25rem 0; overflow-x: auto; white-space: pre; line-height: 1.7;
+  }
+
+  footer {
+    margin-top: 5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: .74rem; color: var(--faint);
+    max-width: 40rem;
+  }
+  a { color: var(--cross); text-underline-offset: 2px; }
+  a:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--cross); outline-offset: 3px; border-radius: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Field findings · Neo4j</p>
+  <h1>Twelve files, <em>or 266</em></h1>
+  <p class="standfirst">
+    What a unified cross-repo code graph answers that single-repo extractors
+    structurally cannot — measured against nine real open-source repositories
+    rather than asserted.
+  </p>
+
+  <dl class="meta">
+    <div><dt>Repositories</dt><dd>9</dd></div>
+    <div><dt>Extractors</dt><dd>3</dd></div>
+    <div><dt>Symbols</dt><dd>166,375</dd></div>
+    <div><dt>Relationships</dt><dd>812,132</dd></div>
+    <div><dt>Corpora</dt><dd>Python · Go</dd></div>
+  </dl>
+</header>
+
+<section>
+  <h2>The result, in one comparison</h2>
+  <p class="lede">
+    Change <code>InjectOrgID</code> in <code>grafana/dskit</code>. What breaks?
+  </p>
+
+  <div class="split">
+    <div class="arm">
+      <span class="label">One tool</span>
+      <span class="fig">12</span>
+      <span class="note">files, all inside dskit</span>
+    </div>
+    <span class="to">→</span>
+    <div class="arm joined">
+      <span class="label">Joined graph</span>
+      <span class="fig">266</span>
+      <span class="note">
+        files across four repos — mimir 113, loki 105, tempo 36, dskit 12
+      </span>
+    </div>
+  </div>
+
+  <p>
+    A ~22× understatement, and not because the single-repo tool is deficient.
+    The other end of every one of those edges was outside the repository it was
+    indexing. The information was never available to it.
+  </p>
+</section>
+
+<section>
+  <h2>Why the edge cannot exist</h2>
+
+  <figure>
+    <svg viewBox="0 0 640 250" role="img" width="100%"
+         aria-label="Three repositories each hold internal call edges. Cross-repo edges connecting them exist only once all repositories are in one store.">
+      <g font-family="ui-monospace, monospace" font-size="11">
+        <!-- repo boxes -->
+        <rect x="8" y="58" width="176" height="120" rx="3"
+              fill="none" stroke="var(--rule)" stroke-width="1"/>
+        <rect x="232" y="20" width="176" height="90" rx="3"
+              fill="none" stroke="var(--rule)" stroke-width="1"/>
+        <rect x="232" y="140" width="176" height="90" rx="3"
+              fill="none" stroke="var(--rule)" stroke-width="1"/>
+        <rect x="456" y="58" width="176" height="120" rx="3"
+              fill="none" stroke="var(--rule)" stroke-width="1"/>
+
+        <text x="16" y="50" fill="var(--faint)" letter-spacing="1">dskit</text>
+        <text x="240" y="14" fill="var(--faint)" letter-spacing="1">mimir</text>
+        <text x="240" y="248" fill="var(--faint)" letter-spacing="1">loki</text>
+        <text x="464" y="50" fill="var(--faint)" letter-spacing="1">tempo</text>
+
+        <!-- intra-repo edges: muted, the part every tool already has -->
+        <g stroke="var(--faint)" stroke-width="1" opacity=".55">
+          <line x1="40" y1="96" x2="96" y2="130"/>
+          <line x1="96" y1="130" x2="150" y2="100"/>
+          <line x1="264" y1="52" x2="330" y2="80"/>
+          <line x1="264" y1="196" x2="330" y2="168"/>
+          <line x1="492" y1="96" x2="560" y2="132"/>
+        </g>
+        <g fill="var(--faint)">
+          <circle cx="40" cy="96" r="3.2"/><circle cx="150" cy="100" r="3.2"/>
+          <circle cx="264" cy="52" r="3.2"/><circle cx="330" cy="80" r="3.2"/>
+          <circle cx="264" cy="196" r="3.2"/><circle cx="330" cy="168" r="3.2"/>
+          <circle cx="492" cy="96" r="3.2"/><circle cx="560" cy="132" r="3.2"/>
+        </g>
+
+        <!-- the symbol under change -->
+        <circle cx="96" cy="130" r="6" fill="var(--cross)"/>
+        <text x="52" y="152" fill="var(--cross)" font-size="10">InjectOrgID</text>
+
+        <!-- cross-repo edges: the accent, reserved for exactly this -->
+        <g stroke="var(--cross)" stroke-width="1.6" fill="none">
+          <path d="M96 130 C 170 120, 190 70, 264 52"/>
+          <path d="M96 130 C 170 145, 190 180, 264 196"/>
+          <path d="M96 130 C 220 128, 340 110, 492 96"/>
+        </g>
+      </g>
+    </svg>
+    <figcaption>
+      Grey edges are intra-repo — every extractor produces those. The magenta
+      edges only come into existence once all four repositories occupy one
+      store; no extractor can emit one, because the far endpoint is not in
+      scope while it runs.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Extractor choice dominates</h2>
+  <p class="lede">
+    Cross-repo edges scored against an answer key derived from source, which
+    never reads extractor output.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Extractor</th>
+          <th scope="col" style="text-align:right">Precision</th>
+          <th scope="col">Recall · Python</th>
+          <th scope="col">Recall · Go</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="hi">
+          <td class="name">codegraph</td>
+          <td class="num">1.000 / 0.999</td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:96%"></span></span><span class="num">0.960</span></span></td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:53.6%"></span></span><span class="num">0.536</span></span></td>
+        </tr>
+        <tr>
+          <td class="name">graphify</td>
+          <td class="num">1.000</td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:25.4%"></span></span><span class="num">0.254</span></span></td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:0"></span></span><span class="num">0.000</span></span></td>
+        </tr>
+        <tr>
+          <td class="name">gitnexus</td>
+          <td class="num">—</td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:0"></span></span><span class="num">0.000</span></span></td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:0"></span></span><span class="num">0.000</span></span></td>
+        </tr>
+        <tr>
+          <td class="name">graphify merge-graphs</td>
+          <td class="num">—</td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:0"></span></span><span class="num">0.000</span></span></td>
+          <td><span class="bar"><span class="track"><span class="fill" style="width:0"></span></span><span class="num">0.000</span></span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    One design decision explains the spread. CodeGraph keeps the module path on
+    its import records; the other two discard it. Two of three tools therefore
+    carry nothing an ETL can use, and the difference between 0.960 and 0.000 is
+    a field, not an algorithm.
+  </p>
+
+  <div class="callout">
+    <span class="label">On merge-graphs</span>
+    <p>
+      Graphify ships a <code>merge-graphs</code> command described as producing
+      a cross-repo graph. Scored as its own arm, given perfect repository
+      attribution so it is judged only on its edges, it produces
+      <strong>zero</strong> — it namespaces every node and leaves each edge
+      inside its source graph. The merged file already contains both endpoints
+      of the join, including package identity and version. No pass runs over
+      them.
+    </p>
+  </div>
+</section>
+
+<section>
+  <h2>What it found in production code</h2>
+  <p>
+    <code>llm-graph-builder</code> imports <code>GraphDatabase</code>,
+    <code>TransientError</code> and <code>neo4j.time</code> directly from the
+    driver across four files — and never declares <code>neo4j</code> in
+    <code>requirements.txt</code>. It works only because
+    <code>langchain-neo4j</code> pulls the driver in transitively, and breaks
+    silently the day that stops being true.
+  </p>
+
+  <div class="cite">src/graph_query.py       → neo4j.time
+src/graphDB_dataAccess.py → neo4j.exceptions.TransientError
+src/shared/common_fn.py   → neo4j.GraphDatabase
+dbtest.py                 → neo4j.GraphDatabase</div>
+
+  <p>
+    Seeing this needs both halves at once: declared dependencies from manifests
+    and actual references from source. Software-composition tools hold the
+    manifest without the calls; a single-repo code graph holds the calls without
+    the sibling repository.
+  </p>
+</section>
+
+<section>
+  <h2>How much of it to believe</h2>
+  <p class="lede">
+    Three extractors vote independently on every node and edge.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Corroboration</th>
+          <th scope="col" style="text-align:right">Symbols</th>
+          <th scope="col" style="text-align:right">Call edges</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="name">all three</td><td class="num">63.7%</td><td class="num">15.0%</td></tr>
+        <tr><td class="name">two of three</td><td class="num">7.8%</td><td class="num">33.7%</td></tr>
+        <tr><td class="name">single extractor</td><td class="num">28.5%</td><td class="num">51.3%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    High agreement on <em>what is a node</em>; heavy divergence on <em>what
+    calls what</em>. Only 15% of call edges are corroborated by all three, so a
+    blast radius can be re-asked at a chosen evidence threshold:
+  </p>
+
+  <div class="cite">graphdatascience.Graph.name        374 files impacted
+  corroborated by all three          1
+  two of three                     182
+  single extractor — verify        191</div>
+
+  <p>
+    That spread is the honest uncertainty in the answer. It only becomes visible
+    once a third opinion is in the graph.
+  </p>
+</section>
+
+<section>
+  <h2>Subsystems the repository layout hides</h2>
+  <p>
+    GitNexus and Graphify both run Leiden community detection already — per
+    repository, so the result can only ever be intra-repo. The constraint is the
+    projection, not the clustering.
+  </p>
+  <p>
+    Over the joined graph: 6,305 communities at modularity 0.879, of which
+    <strong>24 span more than one repository</strong> and three span all four Go
+    repos — one covering 9,158 symbols across mimir, dskit, loki and tempo.
+    Betweenness independently ranks <code>InjectOrgID</code> near the top, the
+    same symbol the fan-out analysis ranks first. Two unrelated measures, one
+    answer.
+  </p>
+</section>
+
+<section>
+  <h2>Where the claims stop</h2>
+
+  <div class="callout warn">
+    <span class="label">Read before quoting a number</span>
+    <ul>
+      <li>
+        <strong>Not</strong> “these tools can’t do cross-repo.” Graphify ships
+        the command; it produces zero edges, but it exists.
+      </li>
+      <li>
+        <strong>Not</strong> “recall is 0.96.” That is CodeGraph on Python.
+        Graphify is 0.254; on Go, two of three score 0.000.
+      </li>
+      <li>
+        <strong>Not</strong> “precision is always 1.000.” It is on Python;
+        0.999 on Go, where two false positives survive from code that shadows a
+        package name with a variable.
+      </li>
+      <li>
+        <strong>Not</strong> “the agreement figures are clean.” On Go they are a
+        lower bound — roughly 20,853 single-tool methods are an unfixed naming
+        divergence rather than real disagreement.
+      </li>
+    </ul>
+    <p>
+      What survives all of it: the cross-repo edges exist nowhere else, and
+      every one carries its inference method and a confidence value.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Corpora pinned by commit · graphify 0.9.43 · codegraph 1.5.0 · gitnexus 1.6.9<br>
+  Neo4j 2026.07.1 Enterprise · GDS 2026.07.0 · APOC 2026.07.1<br>
+  Ground truth derived from source, independent of extractor output.
+</footer>
+
+</div>

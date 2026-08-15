@@ -48,6 +48,21 @@ Ground truth comes from dependency manifests, not from hand-labelling. The
 extractors never see manifests as a graph — they parse source and hit an
 unresolvable external import — so scoring against them is a fair test.
 
+## Demo
+
+```bash
+./demo.sh              # ten beats, paced, formatted tables
+./demo.sh 2 3 4        # just the core reveal
+PAUSE=0 ./demo.sh      # dry run, ~12s
+```
+
+[`DEMO.md`](DEMO.md) is the run of show: pre-flight checks, per-beat talking
+points and timings, the Bloom close-out, live failure recovery, and a
+"what not to claim" section drawn from the measured boundaries.
+
+A shareable summary of the findings is published as an artifact —
+regenerate it from [`findings.html`](findings.html).
+
 ## Prerequisites — two license keys, assumed present
 
 This harness **assumes two Neo4j license keys sit at the repo root**. Both are
