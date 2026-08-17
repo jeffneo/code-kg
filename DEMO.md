@@ -92,18 +92,31 @@ Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
 
 ### 7 — Circular dependencies  *(2 min)*
-Zero at repository level — Go forbids it. **29 two-file and 168 three-file
-cycles at module level**, each corroborated by two extractors.
+Zero at repository level — Go forbids it. At module level: **13 entangled
+clusters**, the largest being **102 modules of the Python driver mutually
+reachable**, containing 591 distinct cycles, the longest **11 hops**.
 
-> "The interesting one is `orchestrator.py` ↔ `pipeline.py`. The reverse import
-> sits inside a `TYPE_CHECKING` block — which is the idiom for breaking a
-> circular import at runtime. We found a cycle the maintainers already had to
-> work around."
+Point at the first column, not the cycle count.
 
-Be precise here: a `TYPE_CHECKING`-guarded cycle is a *design-time* constraint,
-not a runtime failure. Both matter; they aren't the same severity, and the graph
-doesn't yet record which is which. Saying so is what makes the other findings
-credible.
+> "102 modules that can all reach each other. That's a bigger architectural fact
+> than any single two-file cycle inside it."
+
+Then show the 11-hop chain: `_codec/hydration` → `packstream` → `__init__` →
+`_async/driver` → `_async/io/_bolt` → back to `_codec/hydration`. Nobody finds
+that by reading code.
+
+**The performance point is worth making, because they asked about latency.**
+The obvious query — `MATCH (a:File)-[:IMPORTS*2..n]->(a)` — returns in 18 ms at
+n=5 and **does not finish in 90 seconds at n=6**. Running strongly connected
+components first reduces 13,120 files to the 135 that can be in a cycle at all,
+in 15 ms, and enumeration then runs only inside those. Cycles up to length 11,
+end to end, in well under a second.
+
+> "The naive version can't even reach the length you already found by hand."
+
+Be precise on severity: a `TYPE_CHECKING`-guarded cycle is a *design-time*
+constraint already worked around at runtime, not an outage. The graph doesn't
+record which is which. Saying so is what makes the other findings credible.
 
 ### 8 — How much should you believe?  *(2 min)*
 Three extractors vote on every edge. Only **~15% of call edges are corroborated
@@ -181,7 +194,7 @@ table, Q13 as a bar chart.
 | symptom | do this |
 |---|---|
 | A query returns 0 rows | Wrong symbol id. `./demo.sh 1` then `make shell` and re-find it — ids contain `#` and must be single-quoted |
-| `make gds` errors | Beats 10–11 only. Skip them; nothing else depends on GDS |
+| `make gds` errors | Beats 7, 10 and 11. Q15 needs `sccId` from GDS; the others need communities and centrality |
 | Studio won't sign in | Stay in the terminal. All twelve beats are terminal-only |
 | Studio page blank / connection refused | It exits when Neo4j restarts under it. `docker compose --profile nes up -d` — it now has `restart: unless-stopped` |
 | Neo4j unhealthy | `make up` and wait for healthy; do not present against a starting DB |

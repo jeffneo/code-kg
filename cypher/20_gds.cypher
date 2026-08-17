@@ -85,3 +85,30 @@ CALL gds.pageRank.write('codekg', {
 CALL gds.articulationPoints.write('codekg', {
   writeProperty: 'isArticulationPoint'
 }) YIELD articulationPointCount, nodePropertiesWritten;
+
+
+// ----------------------------------------------------------------------------
+// Strongly connected components over module imports - the cycle pre-filter.
+//
+// A SEPARATE projection from 'codekg', and deliberately DIRECTED. SCC is
+// meaningless on the undirected projection above: reciprocity is what makes a
+// cycle, so orientation must be preserved.
+//
+// Why this exists: naive cycle search does not scale. On this graph
+// `MATCH (a:File)-[:IMPORTS*2..5]->(a)` returns in 18 ms, but *2..6 does not
+// finish in 90 seconds - the path space explodes combinatorially. SCC is
+// O(V+E) and answers the prior question completely: which nodes can be in a
+// cycle at all. Every cycle in the graph lies inside one strongly connected
+// component, by definition, so enumeration afterwards only ever runs on a tiny
+// subgraph.
+//
+// Measured: 13,120 files and 90,104 import edges reduce to 13 cyclic
+// components holding 135 files - a 97x reduction, computed in 15 ms.
+// ----------------------------------------------------------------------------
+CALL gds.graph.drop('modules', false) YIELD graphName;
+
+CALL gds.graph.project('modules', ['File'], {IMPORTS: {orientation: 'NATURAL'}})
+YIELD graphName, nodeCount, relationshipCount;
+
+CALL gds.scc.write('modules', {writeProperty: 'sccId'})
+YIELD componentCount, computeMillis;

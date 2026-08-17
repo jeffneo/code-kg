@@ -111,9 +111,10 @@ beat6() {
 beat7() {
   hr; bold "7. Circular dependencies"
   q q15
-  say "Zero at repo level - Go forbids it. 29 two-file and 168 three-file cycles at module level."
-  dim "   orchestrator.py <-> pipeline.py is real: the reverse import sits in a TYPE_CHECKING"
-  dim "   block, the idiom for breaking a cycle at runtime. The maintainers already knew."
+  say "Read the first column, not the cycle count: 102 modules mutually entangled."
+  say "The longest chain is 11 hops - unfindable by reading code."
+  dim "   Naive search: length 5 in 18ms, length 6 does not finish in 90 seconds."
+  dim "   SCC first reduces 13,120 files to 135 in 15ms, then enumerates only inside those."
   wait_key
 }
 

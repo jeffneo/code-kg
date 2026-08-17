@@ -377,32 +377,64 @@ LIMIT 20;
 
 
 // ----------------------------------------------------------------------------
-// Q15 - CIRCULAR DEPENDENCIES
+// Q15 - CIRCULAR DEPENDENCIES   (requires `make gds` for sccId)
 //
 // Cycles exist at three levels and they are not equally interesting:
 //
-//   repo   -> two repos depending on each other. Rare and usually fatal; Go
+//   repo   -> two repos depending on each other. Rare, usually fatal; Go
 //             forbids it outright. This corpus has none.
-//   module -> two or more files importing each other. COMMON, and the level
-//             where real findings live.
+//   module -> files importing each other. COMMON, and where real findings live.
 //   symbol -> mutual recursion. Often deliberate, rarely a defect.
 //
-// A caveat to state rather than hide: in Python a cycle guarded by
-// `if TYPE_CHECKING:` is a *design-time* cycle that has already been worked
-// around at runtime. Both matter - one is a latent constraint, the other an
-// outage - but they are not the same severity, and the graph does not yet
-// record which is which. Verify before calling one a bug.
+// WHY THIS IS NOT A VARIABLE-LENGTH MATCH
+// ---------------------------------------
+// The obvious query is `MATCH (a:File)-[:IMPORTS*2..n]->(a)`. Measured on this
+// graph: n=5 returns in 18 ms, n=6 does not finish in 90 seconds. The path
+// space explodes, and it also reports each cycle once per rotation, so a
+// 5-cycle arrives five times.
 //
-// `votes` is how many extractors independently saw both edges of the cycle.
+// Instead: strongly connected components first. Every cycle lies inside one SCC
+// by definition, so SCC answers "which nodes can be in a cycle at all" in
+// O(V+E) - 15 ms here - and reduces 13,120 files to 135. Enumeration then runs
+// only inside those, and apoc.nodes.cycles returns each cycle once rather than
+// once per rotation.
+//
+// Result: cycles up to length 11 found in well under 100 ms, where the naive
+// form could not reach length 6 at all.
+//
+// READ THE COMPONENT SIZE FIRST. `modules_entangled` is the stronger signal: a
+// 102-module strongly connected component is a far larger architectural fact
+// than any individual two-file cycle inside it.
+//
+// CAVEAT: in Python a cycle guarded by `if TYPE_CHECKING:` is a *design-time*
+// cycle already worked around at runtime. Both matter - one is a latent
+// constraint, the other an outage - but they are not the same severity, and the
+// graph does not record which is which. Verify before calling one a bug.
 // ----------------------------------------------------------------------------
-MATCH (a:File)-[r1:IMPORTS]->(b:File)-[r2:IMPORTS]->(a)
-WHERE a.id < b.id
-RETURN split(a.repo, '/')[-1] AS repo,
-       a.path                 AS file_a,
-       b.path                 AS file_b,
-       apoc.coll.min([size(r1.extractors), size(r2.extractors)]) AS votes
-ORDER BY votes DESC, repo, file_a
-LIMIT 25;
+MATCH (f:File) WHERE f.sccId IS NOT NULL
+WITH f.sccId AS scc, collect(f) AS members, count(*) AS size
+WHERE size > 1
+// maxDepth bounds enumeration inside a component. Unbounded is fine on this
+// corpus (591 cycles, longest 11, 39 ms on the largest component) but a denser
+// codebase will want the guard.
+CALL apoc.nodes.cycles(members, {relTypes: ['IMPORTS'], maxDepth: 10}) YIELD path
+// ORDER BY before the aggregation is what makes head(collect(...)) the LONGEST
+// cycle rather than an arbitrary one. Without it the example returned for a
+// large component is usually a trivial two-file cycle, which is the least
+// interesting thing in it.
+WITH scc, size, members, path ORDER BY length(path) DESC
+WITH scc, size, members,
+     count(path)          AS cycles,
+     min(length(path))    AS shortest,
+     max(length(path))    AS longest,
+     head(collect(path))  AS worst
+RETURN split(members[0].repo, '/')[-1]  AS repo,
+       size                             AS modules_entangled,
+       cycles,
+       shortest,
+       longest,
+       [n IN nodes(worst) | n.path]     AS longest_cycle
+ORDER BY modules_entangled DESC, cycles DESC;
 
 
 // ----------------------------------------------------------------------------

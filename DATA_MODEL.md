@@ -178,6 +178,14 @@ Confidence is graded by *how* the match was made, not guessed:
 | `pagerank` | PageRank | influence, distinct from brokerage |
 | `isArticulationPoint` | Articulation points | **INTEGER 0/1, not boolean** — predicates need `> 0` |
 
+A second, separate projection `modules` covers `:File` and `IMPORTS` only, and
+is **directed** — orientation is what makes a cycle a cycle, so the undirected
+projection above is useless for it:
+
+| property | algorithm | reading |
+|---|---|---|
+| `sccId` | Strongly connected components | every file in a component of size > 1 is in at least one cycle; Q15 uses this as its pre-filter |
+
 ---
 
 ## Reading the provenance

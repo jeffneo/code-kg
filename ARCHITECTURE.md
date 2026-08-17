@@ -132,6 +132,27 @@ highest-leverage choice in the schema.
 Comparison arms are filters over one load. Three extractors in three databases
 would make agreement a join across databases; in one, it is `size(extractors)`.
 
+### Reach for the right algorithm before the bigger traversal
+
+Circular-dependency detection is the clearest case in the repo. The obvious
+Cypher is `MATCH (a:File)-[:IMPORTS*2..n]->(a)`. Measured here: **n=5 returns in
+18 ms, n=6 does not finish in 90 seconds** — the path space explodes, and each
+cycle is reported once per rotation.
+
+Strongly connected components answer the *prior* question — which nodes can be
+in a cycle at all — in O(V+E). On this graph that is 15 ms and reduces 13,120
+files to 135, a 97x cut, and it is **complete**: every cycle lies inside one SCC
+by definition. Enumeration then runs only inside those components, where
+`apoc.nodes.cycles` returns each cycle once rather than once per rotation.
+
+Result: cycles up to length 11 in well under a second, where the direct form
+could not reach length 6.
+
+The general shape is worth carrying into any evaluation: **a graph algorithm
+that answers a coarser question first is often the way to make the fine-grained
+traversal affordable.** GDS is not only for analytics; here it is a query
+planner.
+
 ### Confidence graded by method, never flat
 
 A Go module-prefix match is exact by construction and gets 1.0. A Python
