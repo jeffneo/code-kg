@@ -374,3 +374,64 @@ RETURN split(s.repo, '/')[-1]        AS defined_in,
        round(coalesce(s.betweenness, 0)) AS betweenness
 ORDER BY consuming_repos DESC, betweenness DESC
 LIMIT 20;
+
+
+// ----------------------------------------------------------------------------
+// Q15 - CIRCULAR DEPENDENCIES
+//
+// Cycles exist at three levels and they are not equally interesting:
+//
+//   repo   -> two repos depending on each other. Rare and usually fatal; Go
+//             forbids it outright. This corpus has none.
+//   module -> two or more files importing each other. COMMON, and the level
+//             where real findings live.
+//   symbol -> mutual recursion. Often deliberate, rarely a defect.
+//
+// A caveat to state rather than hide: in Python a cycle guarded by
+// `if TYPE_CHECKING:` is a *design-time* cycle that has already been worked
+// around at runtime. Both matter - one is a latent constraint, the other an
+// outage - but they are not the same severity, and the graph does not yet
+// record which is which. Verify before calling one a bug.
+//
+// `votes` is how many extractors independently saw both edges of the cycle.
+// ----------------------------------------------------------------------------
+MATCH (a:File)-[r1:IMPORTS]->(b:File)-[r2:IMPORTS]->(a)
+WHERE a.id < b.id
+RETURN split(a.repo, '/')[-1] AS repo,
+       a.path                 AS file_a,
+       b.path                 AS file_b,
+       apoc.coll.min([size(r1.extractors), size(r2.extractors)]) AS votes
+ORDER BY votes DESC, repo, file_a
+LIMIT 25;
+
+
+// ----------------------------------------------------------------------------
+// Q16 - TEST IMPACT ACROSS REPOSITORIES
+//
+// "This change is in a shared library. Which test suites - in which repos -
+// actually exercise it?"
+//
+// The cross-repo half is the part no single-repo tool can answer: a test in
+// mimir that covers a change in dskit is invisible to an extractor indexing
+// either one alone.
+//
+// Test files are identified by path convention rather than by a marker in the
+// graph, so the pattern list is the thing to adjust for another codebase.
+//
+// :param changed => a symbol id
+// ----------------------------------------------------------------------------
+MATCH (changed:Symbol {id: $changed})
+CALL (changed) {
+    MATCH (s:Symbol)-[:CALLS|CALLS_CROSS_REPO*1..5]->(changed)
+    RETURN s.repo AS repo, s.path AS path
+  UNION
+    MATCH (f:File)-[:IMPORTS_CROSS_REPO]->(changed)
+    RETURN f.repo AS repo, f.path AS path
+}
+WITH repo, path
+WHERE path =~ '(?i).*(_test\\.go|test_.*\\.py|.*_test\\.py|/tests?/.*|.*\\.spec\\..*)'
+WITH split(repo, '/')[-1]     AS repo,
+     count(DISTINCT path)     AS test_files,
+     collect(DISTINCT path)[0..4] AS examples
+RETURN repo, test_files, examples
+ORDER BY test_files DESC;

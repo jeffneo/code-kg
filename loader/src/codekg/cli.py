@@ -145,6 +145,7 @@ def cmd_load(args: argparse.Namespace) -> None:
             n_symbols = store.write_batched(db.MERGE_SYMBOL, symbol_rows)
 
             n_calls = store.write_batched(db.MERGE_CALLS, mapper.calls(doc, repo, symbol_ids))
+            n_imports = store.write_batched(db.MERGE_FILE_IMPORTS, mapper.file_imports(doc, repo))
             # repo_root lets the mapper recover import modules from source -
             # graphify records the imported symbol but drops the module it came
             # from. See mappers/importmap.py for why.
@@ -157,8 +158,9 @@ def cmd_load(args: argparse.Namespace) -> None:
                 mapper.external_refs(doc, repo, ecosystem, symbol_ids, repo_root=sub),
             )
 
-            print(f"  {rid}: {n_files} files, {n_symbols} symbols, "
-                  f"{n_calls} calls, {n_refs} external refs, {len(pkg_rows)} package edges")
+            print(f"  {rid}: {n_files} files, {n_symbols} symbols, {n_calls} calls, "
+                  f"{n_imports} module imports, {n_refs} external refs, "
+                  f"{len(pkg_rows)} package edges")
 
 
 def cmd_enrich(args: argparse.Namespace) -> None:

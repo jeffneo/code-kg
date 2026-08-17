@@ -17,11 +17,12 @@ fail=0
 for case in "${CASES[@]}"; do
   IFS='|' read -r corpus sym lib <<< "$case"
   printf "corpus %s:\n" "$corpus"
-  for q in q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14; do
+  for q in q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16; do
     case $q in
       q4)       args=(query "$q" --param "lib_repo=$lib") ;;
       q1|q2|q3|q11) args=(query "$q" --param "changed=$sym") ;;
       q9|q10)   args=(query "$q" --param "corpus=$corpus") ;;
+      q16)      args=(query "$q" --param "changed=$sym") ;;
       *)        args=(query "$q") ;;
     esac
     out=$(docker compose run --rm -T loader "${args[@]}" </dev/null 2>/dev/null | grep -vE "^ Container|^time=")

@@ -48,6 +48,14 @@ Ground truth comes from dependency manifests, not from hand-labelling. The
 extractors never see manifests as a graph — they parse source and hit an
 unresolvable external import — so scoring against them is a fair test.
 
+## Documents
+
+| file | for |
+|---|---|
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | why it is built this way — control flow, design decisions, extension points |
+| [`DATA_MODEL.md`](DATA_MODEL.md) | every node label, relationship type and property, and what it means |
+| [`DEMO.md`](DEMO.md) | run of show, talking points, failure recovery |
+
 ## Demo
 
 ```bash

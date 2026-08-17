@@ -177,6 +177,18 @@ MERGE (f)-[u:IMPORTS_EXT]->(e)
       u.extractors = coll.distinct(coalesce(u.extractors, []) + row.extractor)
 """
 
+# Intra-repo module dependencies. Distinct from IMPORTS_EXT, which points at an
+# :ExternalRef outside the repo. These are File->File and they are what makes
+# circular-import detection possible - cycles live at module level far more
+# often than at package or symbol level.
+MERGE_FILE_IMPORTS = """
+UNWIND $batch AS row
+MATCH (src:File {id: row.src})
+MATCH (dst:File {id: row.dst})
+MERGE (src)-[i:IMPORTS]->(dst)
+  SET i.extractors = coll.distinct(coalesce(i.extractors, []) + row.extractor)
+"""
+
 DELETE_REPO_SUBGRAPH = """
 MATCH (r:Repo {id: $repo})
 OPTIONAL MATCH (r)-[:CONTAINS]->(f:File)

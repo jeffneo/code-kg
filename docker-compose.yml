@@ -65,6 +65,10 @@ services:
     depends_on:
       nes-init:
         condition: service_completed_successfully
+    # Studio exits if it loses its asset store, which happens whenever Neo4j
+    # restarts under it. Without a restart policy it stays dead and the first
+    # you know about it is a blank page at :8080 mid-demo.
+    restart: unless-stopped
     ports:
       - "${NES_PORT:-8080}:8080"
     volumes:

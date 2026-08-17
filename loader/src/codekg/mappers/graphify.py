@@ -127,6 +127,38 @@ def symbols(doc: dict, repo: str, ecosystem: str) -> Iterator[dict]:
         }
 
 
+def file_imports(doc: dict, repo: str) -> Iterator[dict]:
+    """File -> File imports that resolve inside this repo.
+
+    A graphify file node is the one whose label is the basename of its own
+    source_file; an import edge between two of those is a module dependency.
+    """
+    nodes = {n["id"]: n for n in doc.get("nodes", [])}
+
+    def is_file(n):
+        path = n.get("source_file") or ""
+        return bool(path) and n.get("label") == path.rsplit("/", 1)[-1]
+
+    seen: set[tuple[str, str]] = set()
+    for edge in doc.get("links", []):
+        if edge.get("relation") not in ("imports", "imports_from"):
+            continue
+        src, dst = nodes.get(edge.get("source")), nodes.get(edge.get("target"))
+        if not src or not dst or not is_file(src) or not is_file(dst):
+            continue
+        if src["source_file"] == dst["source_file"]:
+            continue                     # self-import is not a dependency
+        key = (src["source_file"], dst["source_file"])
+        if key in seen:
+            continue
+        seen.add(key)
+        yield {
+            "src": ids.file_id(repo, src["source_file"]),
+            "dst": ids.file_id(repo, dst["source_file"]),
+            "extractor": EXTRACTOR,
+        }
+
+
 def calls(doc: dict, repo: str, symbol_ids: set[str]) -> Iterator[dict]:
     """Intra-repo call edges.
 

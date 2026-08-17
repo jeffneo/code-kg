@@ -121,10 +121,12 @@ Dangling references, split into resolution misses vs genuine third-party.
 Terminal tables prove it; Bloom makes it feel like an estate rather than a
 query result.
 
-**Verified in place:** NES runs with `bloom: {Enabled: true}`, and the `reader`
+**Verified in place:** NES runs with `bloom: {Enabled: true}`; the `reader`
 grants Bloom needs (`SHOW INDEXES`, `SHOW CONSTRAINTS`) are applied by
-`nes-init`. **Not verified:** the click-path below — walk it once yourself
-before presenting.
+`nes-init`; and the server log confirms `neo4j`'s `admin` role maps to
+`roles/studio-admin`, so **saving queries, dashboards and Perspectives works**
+with no role-mapping configuration. **Not verified:** the click-path below —
+walk it once yourself before presenting.
 
 1. http://localhost:8080 → sign in → deployment **codekg**, database **neo4j**.
 2. Bloom → new Perspective on `neo4j`. Let it generate from the schema.
@@ -157,6 +159,7 @@ table, Q13 as a bar chart.
 | A query returns 0 rows | Wrong symbol id. `./demo.sh 1` then `make shell` and re-find it — ids contain `#` and must be single-quoted |
 | `make gds` errors | Beats 8–9 only. Skip them; nothing else depends on GDS |
 | Studio won't sign in | Stay in the terminal. All ten beats are terminal-only |
+| Studio page blank / connection refused | It exits when Neo4j restarts under it. `docker compose --profile nes up -d` — it now has `restart: unless-stopped` |
 | Neo4j unhealthy | `make up` and wait for healthy; do not present against a starting DB |
 | Numbers differ from this doc | Expected if the corpus was re-fetched. `corpus.lock.yaml` pins commits — say so, it's a strength |
 

@@ -122,6 +122,18 @@ def symbols(conn: sqlite3.Connection, repo: str, ecosystem: str) -> Iterator[dic
         }
 
 
+def file_imports(conn: sqlite3.Connection, repo: str) -> Iterator[dict]:
+    """Not available from this artifact.
+
+    CodeGraph's `imports` edges run File -> import-node, and the import node
+    carries a module path rather than a resolved file. Turning that into
+    File -> File would mean re-resolving module paths to files ourselves, which
+    is the extractor's job. graphify and gitnexus both emit the resolved form,
+    so the edge is covered without guessing here.
+    """
+    return iter(())
+
+
 def calls(conn: sqlite3.Connection, repo: str, symbol_ids: set[str]) -> Iterator[dict]:
     placeholders = ",".join("?" * len(CALL_KINDS))
     query = f"""

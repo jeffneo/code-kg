@@ -103,6 +103,26 @@ def symbols(doc: dict, repo: str, ecosystem: str) -> Iterator[dict]:
         }
 
 
+def file_imports(doc: dict, repo: str) -> Iterator[dict]:
+    """File -> File IMPORTS, which GitNexus emits only for internal resolution."""
+    files = {f["id"]: f.get("path") for f in doc.get("files", [])}
+    seen: set[tuple[str, str]] = set()
+    for edge in doc.get("edges", []):
+        if edge.get("type") != "IMPORTS":
+            continue
+        src, dst = files.get(edge.get("src")), files.get(edge.get("dst"))
+        if not src or not dst or src == dst:
+            continue
+        if (src, dst) in seen:
+            continue
+        seen.add((src, dst))
+        yield {
+            "src": ids.file_id(repo, src),
+            "dst": ids.file_id(repo, dst),
+            "extractor": EXTRACTOR,
+        }
+
+
 def calls(doc: dict, repo: str, symbol_ids: set[str]) -> Iterator[dict]:
     index = _index(doc, repo)
     for edge in doc.get("edges", []):
