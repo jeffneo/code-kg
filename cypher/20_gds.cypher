@@ -94,21 +94,53 @@ CALL gds.articulationPoints.write('codekg', {
 // meaningless on the undirected projection above: reciprocity is what makes a
 // cycle, so orientation must be preserved.
 //
-// Why this exists: naive cycle search does not scale. On this graph
+// Why SCC at all: naive cycle search does not scale. On this graph
 // `MATCH (a:File)-[:IMPORTS*2..5]->(a)` returns in 18 ms, but *2..6 does not
-// finish in 90 seconds - the path space explodes combinatorially. SCC is
-// O(V+E) and answers the prior question completely: which nodes can be in a
-// cycle at all. Every cycle in the graph lies inside one strongly connected
-// component, by definition, so enumeration afterwards only ever runs on a tiny
-// subgraph.
+// finish in 90 seconds. SCC is O(V+E) and answers the prior question
+// completely - which nodes can be in a cycle at all - so enumeration afterwards
+// only ever runs on a tiny subgraph.
 //
-// Measured: 13,120 files and 90,104 import edges reduce to 13 cyclic
-// components holding 135 files - a 97x reduction, computed in 15 ms.
+// TWO projections, because the raw answer is misleading:
+//
+//   modules       code files only. Markdown was inflating the result badly -
+//                 graphify indexes .md and treats a link as an import, so
+//                 mimir and loki appeared to have cycles that were entirely
+//                 documentation cross-links.
+//
+//   modules_core  code files, EXCLUDING __init__.py. A Python package facade
+//                 that re-exports from submodules which import back from the
+//                 package root is idiomatic, deliberate, and not a defect - but
+//                 it creates enormous strongly connected components. The
+//                 driver's 102-module component falls to 3 real modules once
+//                 the facades are removed. Reporting only the first number
+//                 would badly overstate the finding.
 // ----------------------------------------------------------------------------
 CALL gds.graph.drop('modules', false) YIELD graphName;
 
-CALL gds.graph.project('modules', ['File'], {IMPORTS: {orientation: 'NATURAL'}})
-YIELD graphName, nodeCount, relationshipCount;
+MATCH (src:File)-[:IMPORTS]->(dst:File)
+WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+WITH gds.graph.project('modules', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+// Clear first. gds.scc.write only writes nodes that are IN the projection; it
+// does not remove the property from nodes that have since dropped out. After
+// narrowing the projection to code files, every Markdown and shell file kept a
+// stale sccId from the previous run and went on being reported as cyclic.
+MATCH (f:File) WHERE f.sccId IS NOT NULL REMOVE f.sccId;
 
 CALL gds.scc.write('modules', {writeProperty: 'sccId'})
+YIELD componentCount, computeMillis;
+
+CALL gds.graph.drop('modules_core', false) YIELD graphName;
+
+MATCH (src:File)-[:IMPORTS]->(dst:File)
+WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND NOT src.path ENDS WITH '__init__.py'
+  AND NOT dst.path ENDS WITH '__init__.py'
+WITH gds.graph.project('modules_core', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+MATCH (f:File) WHERE f.sccCoreId IS NOT NULL REMOVE f.sccCoreId;
+
+CALL gds.scc.write('modules_core', {writeProperty: 'sccCoreId'})
 YIELD componentCount, computeMillis;

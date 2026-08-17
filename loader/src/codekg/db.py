@@ -40,18 +40,25 @@ class Store:
     def run_script(self, path: str) -> list[list[dict[str, Any]]]:
         """Execute a semicolon-delimited .cypher file, statement by statement.
 
-        Naive splitting on ';' is fine for these files - they contain no string
-        literals with semicolons. If that stops being true, this needs a real
-        lexer rather than a bigger regex.
+        Comments are stripped BEFORE splitting on ';'. Doing it the other way
+        round - which this did originally - means a semicolon inside a comment
+        splits the file mid-sentence and the remainder of the comment is handed
+        to the server as a statement. That failure is confusing to read, because
+        the syntax error names a word from prose.
+
+        Still not a real lexer: a ';' inside a string literal would break it.
+        These files contain none.
         """
         with open(path) as fh:
             body = fh.read()
 
+        without_comments = "\n".join(
+            line for line in body.splitlines() if not line.strip().startswith("//")
+        )
+
         results = []
-        for raw in body.split(";"):
-            stmt = "\n".join(
-                line for line in raw.splitlines() if not line.strip().startswith("//")
-            ).strip()
+        for raw in without_comments.split(";"):
+            stmt = raw.strip()
             if not stmt:
                 continue
             with self._driver.session() as session:

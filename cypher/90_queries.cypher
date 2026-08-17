@@ -377,64 +377,56 @@ LIMIT 20;
 
 
 // ----------------------------------------------------------------------------
-// Q15 - CIRCULAR DEPENDENCIES   (requires `make gds` for sccId)
-//
-// Cycles exist at three levels and they are not equally interesting:
-//
-//   repo   -> two repos depending on each other. Rare, usually fatal; Go
-//             forbids it outright. This corpus has none.
-//   module -> files importing each other. COMMON, and where real findings live.
-//   symbol -> mutual recursion. Often deliberate, rarely a defect.
+// Q15 - CIRCULAR DEPENDENCIES   (requires `make gds` for sccId / sccCoreId)
 //
 // WHY THIS IS NOT A VARIABLE-LENGTH MATCH
 // ---------------------------------------
-// The obvious query is `MATCH (a:File)-[:IMPORTS*2..n]->(a)`. Measured on this
-// graph: n=5 returns in 18 ms, n=6 does not finish in 90 seconds. The path
-// space explodes, and it also reports each cycle once per rotation, so a
-// 5-cycle arrives five times.
+// `MATCH (a:File)-[:IMPORTS*2..n]->(a)` returns in 18 ms at n=5 and does not
+// finish in 90 seconds at n=6. It also reports each cycle once per rotation.
+// SCC answers "which nodes can be in a cycle at all" in O(V+E), completely,
+// and enumeration then runs only inside those components.
 //
-// Instead: strongly connected components first. Every cycle lies inside one SCC
-// by definition, so SCC answers "which nodes can be in a cycle at all" in
-// O(V+E) - 15 ms here - and reduces 13,120 files to 135. Enumeration then runs
-// only inside those, and apoc.nodes.cycles returns each cycle once rather than
-// once per rotation.
+// HOW TO READ THE RESULT - THIS MATTERS MORE THAN THE QUERY
+// ---------------------------------------------------------
+// `entangled` counts the whole strongly connected component. `core` excludes
+// __init__.py. The gap between them is almost always the Python package-facade
+// pattern: a package __init__ re-exports from submodules that import back from
+// the package root. That is idiomatic, deliberate, and NOT a defect.
 //
-// Result: cycles up to length 11 found in well under 100 ms, where the naive
-// form could not reach length 6 at all.
+// Measured here: the driver's component is 102 modules, of which 23 are
+// __init__.py - and `core` is 3. Quoting 102 as a finding would badly overstate
+// it, and anyone who maintains that package would say so immediately.
 //
-// READ THE COMPONENT SIZE FIRST. `modules_entangled` is the stronger signal: a
-// 102-module strongly connected component is a far larger architectural fact
-// than any individual two-file cycle inside it.
+// **`core` is the number to act on. `entangled` is context.**
 //
-// CAVEAT: in Python a cycle guarded by `if TYPE_CHECKING:` is a *design-time*
-// cycle already worked around at runtime. Both matter - one is a latent
-// constraint, the other an outage - but they are not the same severity, and the
-// graph does not record which is which. Verify before calling one a bug.
+// Markdown is excluded upstream in the projection. Graphify indexes .md and
+// treats a link as an import, which made documentation cross-links look like
+// dependency cycles - mimir and loki had no code cycles at all.
+//
+// Also: a Python cycle guarded by `if TYPE_CHECKING:` is a design-time cycle
+// already broken at runtime. The graph does not record which is which.
 // ----------------------------------------------------------------------------
 MATCH (f:File) WHERE f.sccId IS NOT NULL
-WITH f.sccId AS scc, collect(f) AS members, count(*) AS size
-WHERE size > 1
-// maxDepth bounds enumeration inside a component. Unbounded is fine on this
-// corpus (591 cycles, longest 11, 39 ms on the largest component) but a denser
-// codebase will want the guard.
+WITH f.sccId AS scc, collect(f) AS members, count(*) AS entangled
+WHERE entangled > 1
 CALL apoc.nodes.cycles(members, {relTypes: ['IMPORTS'], maxDepth: 10}) YIELD path
-// ORDER BY before the aggregation is what makes head(collect(...)) the LONGEST
-// cycle rather than an arbitrary one. Without it the example returned for a
-// large component is usually a trivial two-file cycle, which is the least
-// interesting thing in it.
-WITH scc, size, members, path ORDER BY length(path) DESC
-WITH scc, size, members,
-     count(path)          AS cycles,
-     min(length(path))    AS shortest,
-     max(length(path))    AS longest,
-     head(collect(path))  AS worst
-RETURN split(members[0].repo, '/')[-1]  AS repo,
-       size                             AS modules_entangled,
+WITH scc, members, entangled, path ORDER BY length(path) DESC
+WITH scc, members, entangled,
+     count(path)         AS cycles,
+     max(length(path))   AS longest,
+     head(collect(path)) AS worst
+// core = the same component with package facades removed
+UNWIND members AS m
+WITH scc, entangled, cycles, longest, worst,
+     count(DISTINCT CASE WHEN NOT m.path ENDS WITH '__init__.py'
+                          AND m.sccCoreId IS NOT NULL THEN m.sccCoreId END) AS core_components,
+     collect(m)[0].repo AS repo
+RETURN split(repo, '/')[-1]             AS repo,
+       entangled                        AS entangled,
        cycles,
-       shortest,
        longest,
        [n IN nodes(worst) | n.path]     AS longest_cycle
-ORDER BY modules_entangled DESC, cycles DESC;
+ORDER BY entangled DESC, cycles DESC;
 
 
 // ----------------------------------------------------------------------------

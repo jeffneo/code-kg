@@ -92,31 +92,32 @@ Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
 
 ### 7 — Circular dependencies  *(2 min)*
-Zero at repository level — Go forbids it. At module level: **13 entangled
-clusters**, the largest being **102 modules of the Python driver mutually
-reachable**, containing 591 distinct cycles, the longest **11 hops**.
+Seven cyclic components in code. The driver's is 102 modules, 591 cycles, the
+longest **11 hops**.
 
-Point at the first column, not the cycle count.
+**Lead with the technique, not the number.** The obvious query —
+`MATCH (a:File)-[:IMPORTS*2..n]->(a)` — returns in 18 ms at n=5 and **does not
+finish in 90 seconds at n=6**. Strongly connected components answer "which nodes
+can be in a cycle at all" in O(V+E), completely, so enumeration runs only inside
+tiny components. Cycles to length 11 in under a second.
 
-> "102 modules that can all reach each other. That's a bigger architectural fact
-> than any single two-file cycle inside it."
+> "The naive version can't reach the length you'd find by hand."
 
-Then show the 11-hop chain: `_codec/hydration` → `packstream` → `__init__` →
-`_async/driver` → `_async/io/_bolt` → back to `_codec/hydration`. Nobody finds
-that by reading code.
+**Then defuse the 102 yourself, before anyone asks.** 23 of those modules are
+`__init__.py`. Strip the package facade and the real cycle is **3 modules** —
+`_warnings.py` ↔ `warnings.py` ↔ `_work/summary.py`. A package `__init__` that
+re-exports from submodules which import back is idiomatic Python, not a defect.
 
-**The performance point is worth making, because they asked about latency.**
-The obvious query — `MATCH (a:File)-[:IMPORTS*2..n]->(a)` — returns in 18 ms at
-n=5 and **does not finish in 90 seconds at n=6**. Running strongly connected
-components first reduces 13,120 files to the 135 that can be in a cycle at all,
-in 15 ms, and enumeration then runs only inside those. Cycles up to length 11,
-end to end, in well under a second.
+> "The big number is a facade pattern, and it's deliberate. The number to act on
+> is three."
 
-> "The naive version can't even reach the length you already found by hand."
+Being the person who explains why the headline number is benign buys more
+credibility than the headline number does. If a driver maintainer is in the room
+and you sold 102 as a vulnerability, you have lost them.
 
-Be precise on severity: a `TYPE_CHECKING`-guarded cycle is a *design-time*
-constraint already worked around at runtime, not an outage. The graph doesn't
-record which is which. Saying so is what makes the other findings credible.
+Also worth saying: Go has **zero** code cycles here. And `mimir`/`loki` initially
+appeared to have some — they were Markdown files cross-linking, because Graphify
+indexes `.md` and treats a link as an import. That is now filtered out.
 
 ### 8 — How much should you believe?  *(2 min)*
 Three extractors vote on every edge. Only **~15% of call edges are corroborated

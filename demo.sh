@@ -111,10 +111,12 @@ beat6() {
 beat7() {
   hr; bold "7. Circular dependencies"
   q q15
-  say "Read the first column, not the cycle count: 102 modules mutually entangled."
-  say "The longest chain is 11 hops - unfindable by reading code."
-  dim "   Naive search: length 5 in 18ms, length 6 does not finish in 90 seconds."
-  dim "   SCC first reduces 13,120 files to 135 in 15ms, then enumerates only inside those."
+  say "An 11-hop import chain in the driver. Naive search cannot even reach length 6."
+  dim "   *2..5 returns in 18ms; *2..6 does not finish in 90 seconds. SCC first, in O(V+E),"
+  dim "   then enumerate only inside components. That is the transferable technique."
+  say "Do NOT sell the 102 as a defect - 23 of those are __init__.py."
+  dim "   Strip the package facade and the real cycle is 3 modules. Say so first;"
+  dim "   being the one who explains why the big number is benign is worth more."
   wait_key
 }
 
