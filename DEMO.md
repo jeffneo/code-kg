@@ -1,11 +1,11 @@
 # codekg — run of show
 
-A ~15 minute demo. Ten beats, one idea: **the cross-repo edges do not exist in
+A ~18 minute demo. Twelve beats, one idea: **the cross-repo edges do not exist in
 any single-repo tool, and once they exist a different class of question becomes
 answerable.**
 
 ```bash
-./demo.sh              # all ten beats, paced, [enter] between each
+./demo.sh              # all twelve beats, paced, [enter] between each
 ./demo.sh 2 3 4        # just the core reveal
 PAUSE=0 ./demo.sh      # dry run, no waiting
 ```
@@ -30,8 +30,8 @@ Check these four things:
 |---|---|---|
 | `CALL gds.license.state()` | `isLicensed: TRUE` | GDS runs community-tier; beats 8–9 degrade. See README prerequisites |
 | `make stats` → Repo | 9 | A corpus was not loaded — re-run `make load` for the missing one |
-| Studio sign-in | works | Beats 1–10 are terminal-only and unaffected; only the Bloom close-out needs it |
-| `./validate.sh` | 14/14 both corpora | Something drifted; do not present until it is green |
+| Studio sign-in | works | Beats 1–12 are terminal-only and unaffected; only the Bloom close-out needs it |
+| `./validate.sh` | 16/16 both corpora | Something drifted; do not present until it is green |
 
 Have a second terminal open on `make shell` for the inevitable "can you show
 me X?"
@@ -41,7 +41,7 @@ me X?"
 ## The beats
 
 Timings assume you talk while it runs. Beats 2→3 are the whole demo; everything
-after is depth. **If you only get five minutes, run 2, 3, 5.**
+after is depth. **If you only get five minutes, run 2, 3, 6.**
 
 ### 1 — What is loaded  *(1 min)*
 Nine real OSS repos: Neo4j's own Python packages and Grafana's Go stack. Three
@@ -69,7 +69,17 @@ Shortest concrete path per impacted repo, with real `file:line`.
 > "This is the part that survives contact with an engineer. It's a path they can
 > open."
 
-### 5 — A defect in Neo4j's own code  *(2 min)*
+### 5 — So which tests actually cover it?  *(1 min)*
+A dskit change reaches **97 mimir, 76 loki, 24 tempo** test files.
+
+> "This is the practical follow-through. Blast radius tells you what to worry
+> about; this tells you what to run before merging."
+
+A mimir test covering a dskit change is invisible to an extractor indexing
+either repo alone. Test files are matched by path convention — adjust the
+pattern in Q16 for their codebase.
+
+### 6 — A defect in Neo4j's own code  *(2 min)*
 `llm-graph-builder` imports `GraphDatabase` and `TransientError` directly from
 `neo4j` across 4 files, and never declares `neo4j` in `requirements.txt`. It
 works only because `langchain-neo4j` pulls the driver in transitively.
@@ -81,20 +91,34 @@ works only because `langchain-neo4j` pulls the driver in transitively.
 Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
 
-### 6 — How much should you believe?  *(2 min)*
+### 7 — Circular dependencies  *(2 min)*
+Zero at repository level — Go forbids it. **29 two-file and 168 three-file
+cycles at module level**, each corroborated by two extractors.
+
+> "The interesting one is `orchestrator.py` ↔ `pipeline.py`. The reverse import
+> sits inside a `TYPE_CHECKING` block — which is the idiom for breaking a
+> circular import at runtime. We found a cycle the maintainers already had to
+> work around."
+
+Be precise here: a `TYPE_CHECKING`-guarded cycle is a *design-time* constraint,
+not a runtime failure. Both matter; they aren't the same severity, and the graph
+doesn't yet record which is which. Saying so is what makes the other findings
+credible.
+
+### 8 — How much should you believe?  *(2 min)*
 Three extractors vote on every edge. Only **~15% of call edges are corroborated
 by all three**.
 
 > "I'd rather show you this than have you find it. If you trust one tool's call
 > graph, most of it is uncorroborated."
 
-### 7 — Blast radius filtered by evidence  *(1 min)*
+### 9 — Blast radius filtered by evidence  *(1 min)*
 374 files: 1 corroborated by all three, 182 by two, 191 single-source.
 
 > "That spread is the honest uncertainty. It only exists because there's a third
 > opinion in the graph."
 
-### 8 — Subsystems that cross repo boundaries  *(2 min)*
+### 10 — Subsystems that cross repo boundaries  *(2 min)*
 GitNexus and Graphify both run Leiden — per repo, so only intra-repo
 communities. Over the joined graph: 24 communities span more than one repo, one
 spans all four Go repos.
@@ -102,14 +126,14 @@ spans all four Go repos.
 > "Same algorithm. The difference is the projection, and the projection they'd
 > need doesn't exist inside any one of them."
 
-### 9 — The estate's chokepoints  *(1 min)*
+### 11 — The estate's chokepoints  *(1 min)*
 `InjectOrgID` near the top by betweenness — and beat 3 ranked it first by
 cross-repo fan-in.
 
 > "Two unrelated measures landing on the same symbol. That's corroboration, not
 > coincidence."
 
-### 10 — What it does *not* know  *(1 min)*
+### 12 — What it does *not* know  *(1 min)*
 Dangling references, split into resolution misses vs genuine third-party.
 
 > "Show this unprompted. Someone who has to ask twice stops believing the rest."
@@ -157,8 +181,8 @@ table, Q13 as a bar chart.
 | symptom | do this |
 |---|---|
 | A query returns 0 rows | Wrong symbol id. `./demo.sh 1` then `make shell` and re-find it — ids contain `#` and must be single-quoted |
-| `make gds` errors | Beats 8–9 only. Skip them; nothing else depends on GDS |
-| Studio won't sign in | Stay in the terminal. All ten beats are terminal-only |
+| `make gds` errors | Beats 10–11 only. Skip them; nothing else depends on GDS |
+| Studio won't sign in | Stay in the terminal. All twelve beats are terminal-only |
 | Studio page blank / connection refused | It exits when Neo4j restarts under it. `docker compose --profile nes up -d` — it now has `restart: unless-stopped` |
 | Neo4j unhealthy | `make up` and wait for healthy; do not present against a starting DB |
 | Numbers differ from this doc | Expected if the corpus was re-fetched. `corpus.lock.yaml` pins commits — say so, it's a strength |

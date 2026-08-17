@@ -91,17 +91,34 @@ beat4() {
 }
 
 beat5() {
-  hr; bold "5. A defect this found in Neo4j's own code"
+  hr; bold "5. So which tests actually cover it?"
+  q q16 "changed=$DSKIT_SYM"
+  say "The practical follow-through from blast radius: what to run before merging."
+  dim "   A mimir test covering a dskit change is invisible to an extractor indexing either alone."
+  wait_key
+}
+
+beat6() {
+  hr; bold "6. A defect this found in Neo4j's own code"
   q q8
-  say "llm-graph-builder imports GraphDatabase and TransientError directly from neo4j,"
+  say "llm-graph-builder imports GraphDatabase, TransientError and neo4j.time directly,"
   say "across 4 files - and never declares neo4j in requirements.txt."
   dim "   It works only because langchain-neo4j pulls the driver in transitively."
   dim "   Needs manifests AND source together: an SCA tool has one, a code graph the other."
   wait_key
 }
 
-beat6() {
-  hr; bold "6. How much of this should you believe?"
+beat7() {
+  hr; bold "7. Circular dependencies"
+  q q15
+  say "Zero at repo level - Go forbids it. 29 two-file and 168 three-file cycles at module level."
+  dim "   orchestrator.py <-> pipeline.py is real: the reverse import sits in a TYPE_CHECKING"
+  dim "   block, the idiom for breaking a cycle at runtime. The maintainers already knew."
+  wait_key
+}
+
+beat8() {
+  hr; bold "8. How much of this should you believe?"
   say "Three extractors vote on every edge. Agreement is a property read, not a second pipeline."
   q q10 "corpus=a"
   say "Only ~15% of call edges are corroborated by all three."
@@ -109,39 +126,39 @@ beat6() {
   wait_key
 }
 
-beat7() {
-  hr; bold "7. The same blast radius, filtered by evidence"
+beat9() {
+  hr; bold "9. The same blast radius, filtered by evidence"
   q q11 "changed=sym:repo:github.com/neo4j/graph-data-science-client:src/graphdatascience/graph/graph_api.py#Graph.name"
   say "That spread is the honest uncertainty in the answer."
   dim "   It only exists once a third opinion is in the graph."
   wait_key
 }
 
-beat8() {
-  hr; bold "8. Subsystems that cross repository boundaries"
+beat10() {
+  hr; bold "10. Subsystems that cross repository boundaries"
   say "GitNexus and Graphify both run Leiden - per repo, so only intra-repo communities."
   say "Same algorithm over the joined graph answers a question they cannot express."
   q q12
   wait_key
 }
 
-beat9() {
-  hr; bold "9. The estate's real chokepoints"
+beat11() {
+  hr; bold "11. The estate's real chokepoints"
   q q13
   say "InjectOrgID ranks near the top by betweenness."
   dim "   Beat 3 ranked it first by cross-repo fan-in. Two unrelated measures, same symbol."
   wait_key
 }
 
-beat10() {
-  hr; bold "10. What it does NOT know"
+beat12() {
+  hr; bold "12. What it does NOT know"
   say "Every dangling reference, and whether it is a resolution miss or genuine third-party."
   q q5
   say "Show this unprompted. A prospect who has to ask twice stops believing the rest."
   wait_key
 }
 
-BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat7 beat8 beat9 beat10)
+BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat7 beat8 beat9 beat10 beat11 beat12)
 
 if [[ $# -eq 0 ]]; then
   for b in "${BEATS[@]}"; do $b; done
