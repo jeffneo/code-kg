@@ -89,7 +89,20 @@ def module_index(repo_root: Path) -> dict[str, str]:
     return index
 
 
-def _contexts(tree: ast.Module) -> dict[int, str]:
+def module_rows(repo: str, repo_root: Path, ecosystem: str) -> Iterator[dict]:
+    """File -> its importable dotted module name.
+
+    Stored on the :File node so cross-repo resolution can match an unresolved
+    import against the file that actually provides that module path. Exact, and
+    the only rule that works when two distributions share a namespace package.
+    """
+    if ecosystem != "python":
+        return
+    for dotted, rel in module_index(repo_root).items():
+        yield {"file": ids.file_id(repo, rel), "module": dotted}
+
+
+def import_contexts(tree: ast.Module) -> dict[int, str]:
     """id(import node) -> execution context.
 
     Walks with an inherited context rather than using ast.walk, because the
@@ -111,6 +124,53 @@ def _contexts(tree: ast.Module) -> dict[int, str]:
             descend(child, child_ctx)
 
     descend(tree, TOPLEVEL)
+    return out
+
+
+_IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+
+
+def guarded_nodes(tree: ast.Module) -> set[int]:
+    """ids of imports wrapped in a try/except that catches an import failure.
+
+    Orthogonal to context, not another context value: a guarded import at module
+    level really does execute on import, so for cycle detection it is a genuine
+    top-level edge. What it changes is what you can ASK SOMEONE TO DO about it.
+
+    Found in corpus D, and it sharpened the finding rather than weakening it.
+    Of the 7 task-sdk -> airflow-core import sites, 2 sit inside
+    `except ModuleNotFoundError:` / `except (ImportError, AttributeError):` with
+    working fallbacks - the SDK already treats core as optional there. The cut
+    set is the other 5. Reporting all 7 as work would have been wrong, and a
+    maintainer would have said so.
+
+    Both the `try` body and the handler bodies count: an import in the handler is
+    the fallback path, which is conditional by construction.
+    """
+    out: set[int] = set()
+
+    def catches_import_error(node: ast.Try) -> bool:
+        for handler in node.handlers:
+            exc = handler.type
+            if exc is None:
+                return True                       # bare except
+            elts = exc.elts if isinstance(exc, ast.Tuple) else [exc]
+            for e in elts:
+                name = e.id if isinstance(e, ast.Name) else getattr(e, "attr", "")
+                if name in _IMPORT_ERRORS:
+                    return True
+        return False
+
+    def descend(node: ast.AST, guarded: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            child_guarded = guarded or (
+                isinstance(child, ast.Try) and catches_import_error(child)
+            )
+            if guarded and isinstance(child, (ast.Import, ast.ImportFrom)):
+                out.add(id(child))
+            descend(child, child_guarded)
+
+    descend(tree, False)
     return out
 
 
@@ -196,29 +256,36 @@ def classified_imports(repo: str, repo_root: Path, ecosystem: str) -> Iterator[d
             continue
         is_package = dotted in packages
 
-        ctx_of = _contexts(tree)
-        # Strongest context wins per edge: a module imported both at top level
-        # and inside a function is really a top-level dependency.
-        best: dict[tuple[str, str], tuple[str, int]] = {}
-        rank = {TOPLEVEL: 3, TYPING: 2, DEFERRED: 1}
+        ctx_of = import_contexts(tree)
+        guarded_of = guarded_nodes(tree)
+        # Strongest dependency wins per edge. An unguarded top-level import beats
+        # a guarded one, which beats TYPE_CHECKING, which beats a function-body
+        # import - so a pair linked by several statements is described by its
+        # hardest link, not by whichever the AST walk reached last.
+        best: dict[tuple[str, str], tuple[int, str, bool, int]] = {}
 
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Import, ast.ImportFrom)):
                 continue
             ctx = ctx_of.get(id(node), TOPLEVEL)
+            guarded = id(node) in guarded_of
+            rank = {TOPLEVEL: 4, TYPING: 2, DEFERRED: 1}[ctx]
+            if ctx == TOPLEVEL and guarded:
+                rank = 3
             for target in _targets(node, dotted, is_package):
                 dst = index.get(target)
                 if dst is None or dst == rel:
                     continue
                 key = (rel, dst)
-                if key not in best or rank[ctx] > rank[best[key][0]]:
-                    best[key] = (ctx, node.lineno)
+                if key not in best or rank > best[key][0]:
+                    best[key] = (rank, ctx, guarded, node.lineno)
 
-        for (src, dst), (ctx, line) in best.items():
+        for (src, dst), (_, ctx, guarded, line) in best.items():
             yield {
                 "src": ids.file_id(repo, src),
                 "dst": ids.file_id(repo, dst),
                 "context": ctx,
+                "guarded": guarded,
                 "line": line,
                 "extractor": "source",
             }

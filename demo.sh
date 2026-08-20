@@ -133,6 +133,34 @@ beat7() {
   wait_key
 }
 
+beat7b() {
+  hr; bold "7b. The cycle that crosses a RELEASE boundary  (corpus D - Airflow)"
+  q q17
+  say "Everything so far is a better answer to a question the tools can ask."
+  dim "   This is one they CANNOT express: when either side is parsed, the other end"
+  dim "   of the edge is out of scope. No single-repo tool can produce this edge."
+  say "apache-airflow-core and apache-airflow-task-sdk REQUIRE EACH OTHER on PyPI:"
+  dim "   airflow-core/pyproject.toml:154  apache-airflow-task-sdk<1.5.0,>=1.4.0"
+  dim "   task-sdk/pyproject.toml:51       apache-airflow-core<3.5.0,>=3.4.0"
+  say "An intra-repo cycle is a refactor. This is a RELEASE DEADLOCK - neither can"
+  dim "   ship without a compatible version of the other already on PyPI. Somebody"
+  dim "   pays for that every release, and no single CI job ever sees it."
+  say "The asymmetry is the finding: 132 import edges one way, 7 the other."
+  dim "   Cut the 7 and a mutual dependency becomes a clean layering."
+  say "But it is FIVE, not seven - and saying why is the credibility play."
+  dim "   Two of the seven sit in 'except ModuleNotFoundError:' with working"
+  dim "   fallbacks; the SDK already treats core as optional there. Handing a"
+  dim "   maintainer seven problems when their own code handles two loses the room."
+  say "declared_both_ways=true is corroboration from a different source: the code"
+  dim "   finding (source AST) and the manifests (pyproject.toml) agree, and no"
+  dim "   extractor reads manifests as a graph."
+  say "If asked 'isn't this one repo?' - yes. Answer it head-on."
+  dim "   Two distributions in apache/airflow. They version, publish and release"
+  dim "   independently, which is what creates the deadlock. Same shape your"
+  dim "   audience meets in a corporate polyrepo. Say 'distribution', not 'repo'."
+  wait_key
+}
+
 beat8() {
   hr; bold "8. How much of this should you believe?"
   say "Three extractors vote on every edge. Agreement is a property read, not a second pipeline."
@@ -174,7 +202,7 @@ beat12() {
   wait_key
 }
 
-BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat7 beat8 beat9 beat10 beat11 beat12)
+BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat7 beat7b beat8 beat9 beat10 beat11 beat12)
 
 if [[ $# -eq 0 ]]; then
   for b in "${BEATS[@]}"; do $b; done

@@ -14,11 +14,31 @@ import re
 from urllib.parse import urlparse
 
 
-def repo_id(url: str) -> str:
-    """https://github.com/neo4j/langchain-neo4j -> repo:github.com/neo4j/langchain-neo4j"""
+def repo_id(url: str, dist: str | None = None) -> str:
+    """https://github.com/neo4j/langchain-neo4j -> repo:github.com/neo4j/langchain-neo4j
+
+    `dist` names a separately published distribution living inside the repo, and
+    is appended as a path segment:
+
+        repo:github.com/apache/airflow/airflow-core
+        repo:github.com/apache/airflow/task-sdk
+
+    Needed because two distributions in one repository are two dependency
+    endpoints - they version, publish and release independently - but they share
+    a clone URL, so URL-derived ids collide and the two collapse into one node.
+
+    A path segment rather than a new separator, deliberately: `split(repo,'/')[-1]`
+    is already how queries derive a display label, and it keeps working.
+    """
     parsed = urlparse(url)
     path = parsed.path.strip("/").removesuffix(".git")
-    return f"repo:{parsed.netloc}/{path}"
+    base = f"repo:{parsed.netloc}/{path}"
+    return f"{base}/{dist}" if dist else base
+
+
+def repo_id_for(spec: dict) -> str:
+    """Canonical repo id for a corpus.yaml entry. Use this, not repo_id(url)."""
+    return repo_id(spec["url"], spec.get("dist"))
 
 
 def file_id(repo: str, path: str) -> str:

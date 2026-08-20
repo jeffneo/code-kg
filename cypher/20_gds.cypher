@@ -213,3 +213,52 @@ MATCH (f:File) WHERE f.sccDesignId IS NOT NULL REMOVE f.sccDesignId;
 
 CALL gds.scc.write('modules_design', {writeProperty: 'sccDesignId'})
 YIELD componentCount, computeMillis;
+
+
+// ----------------------------------------------------------------------------
+// Cross-BOUNDARY cycles - the projection no single-repo tool can build.
+//
+// Everything above is intra-repo: the whole graph could have come from one
+// extractor run. This one unions two edge sets that no extractor sees together:
+//
+//   intra-repo   File -[:IMPORTS {context:'toplevel'}]-> File
+//   cross-repo   File -[:IMPORTS_CROSS_REPO]-> Symbol <-[:DECLARES]- File
+//
+// The second is derived by the linking pass, so it exists nowhere upstream. With
+// both in one projection, SCC finds components that SPAN repositories - a
+// dependency cycle across a published-artifact boundary, which is the case that
+// costs a release deadlock rather than a refactor.
+//
+// UNION inside a CALL subquery because the two patterns have different shapes;
+// gds.graph.project is then called once over the combined row set.
+// ----------------------------------------------------------------------------
+CALL gds.graph.drop('modules_xrepo', false) YIELD graphName;
+
+CALL () {
+  MATCH (a:File)-[r:IMPORTS]->(b:File)
+  WHERE a.language IN ['py', 'go'] AND b.language IN ['py', 'go']
+    AND r.context = 'toplevel'
+  RETURN a AS src, b AS dst
+  UNION
+  // Exact, file-to-file, extractor-independent. The primary cross-boundary edge.
+  // Context-filtered for the same reason the intra-repo edges are: a cycle held
+  // together by an `if TYPE_CHECKING:` import is not a runtime cycle, and it
+  // would be a worse mistake here than intra-repo, since this is the finding
+  // the whole corpus exists to demonstrate.
+  MATCH (a:File)-[x:IMPORTS_FILE_CROSS_REPO]->(b:File)
+  WHERE x.context = 'toplevel'
+  RETURN a AS src, b AS dst
+  UNION
+  // Symbol-mediated fallback, so a corpus whose crossings only ever resolved at
+  // symbol level still participates rather than silently dropping out.
+  MATCH (a:File)-[:IMPORTS_CROSS_REPO]->(s:Symbol)<-[:DECLARES]-(b:File)
+  WHERE a.repo <> b.repo
+  RETURN a AS src, b AS dst
+}
+WITH gds.graph.project('modules_xrepo', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+MATCH (f:File) WHERE f.sccXRepoId IS NOT NULL REMOVE f.sccXRepoId;
+
+CALL gds.scc.write('modules_xrepo', {writeProperty: 'sccXRepoId'})
+YIELD componentCount, computeMillis;

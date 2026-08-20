@@ -278,6 +278,44 @@ the same standard the manifest oracle is held to:
 The earlier exhibit used the neo4j-python-driver and was wrong — see *Cycle
 detection* below.
 
+**Corpus D — `apache-airflow-core` ↔ `apache-airflow-task-sdk`, for the cycle
+that crosses a published boundary.**
+
+Corpus C's cycles are intra-repo, which is a refactor. This one is a **release
+deadlock**: two separately published, separately versioned PyPI distributions
+that require each other in non-extra runtime dependencies —
+
+```
+airflow-core/pyproject.toml:154   apache-airflow-task-sdk<1.5.0,>=1.4.0
+task-sdk/pyproject.toml:51        apache-airflow-core<3.5.0,>=3.4.0
+```
+
+Neither can be released without a compatible version of the other already
+existing. No single-repo tool can see it: when either side is parsed the other
+end of the edge is out of scope.
+
+Measured: **132 top-level import edges core → task-sdk, 7 the other way**, and
+of those 7, five are unguarded and two sit in `except ImportError:` blocks with
+working fallbacks. So the actionable cut set is **5 import sites with line
+numbers** — a work item, not an observation.
+
+**Say "distribution", not "repository".** These live in one repository. What
+makes them two dependency endpoints is that they version, publish and release
+independently, which is what causes the deadlock. The exhibit holds up under
+that framing and collapses under the sloppier one.
+
+Two things had to change to support it, both genuine improvements:
+
+- **`dist` in the repo id.** Two distributions sharing a clone URL collapsed
+  into one `:Repo`, which makes a mutual dependency between them literally
+  unrepresentable.
+- **Exact module-path resolution** (`python-module-path`). Both distributions
+  publish into the same `airflow` namespace package, so the import name matches
+  *neither* distribution name and the top-level-module rule cannot work at all.
+  Declaring both as publishing `airflow` would have been worse than useless —
+  every import would match both repos and the tool would manufacture the very
+  cycle it is supposed to discover.
+
 ---
 
 ## The three extractors
@@ -383,5 +421,17 @@ ID-based rather than requiring name resolution.
   return nothing, which is a safe failure rather than a wrong answer.
 - **Cycle scoring is Python-only.** Go needs no oracle — the compiler is the
   oracle, and it rejects package cycles outright.
+- **`enrich` captures `from x import y`, not plain `import x`.** External refs
+  come from `ast.ImportFrom` only, so a cross-boundary dependency expressed
+  solely as `import pkg.mod` is missed. It does not affect corpus D, where the
+  crossing imports are all `from … import …`, but it is a real gap.
+- **Cross-boundary cycle detection is Python-only**, because
+  `IMPORTS_FILE_CROSS_REPO` is resolved from `File.module`, which only the Python
+  path populates. Go would need the module-prefix rule extended to file
+  granularity.
+- **Context filtering matters more than it looks on the cross-boundary edges.**
+  Of 863 raw edges, 248 (29%) are `typing` or `deferred` — not runtime
+  dependencies. Reporting them would inflate every cross-boundary cycle claim by
+  roughly a third.
 - **Extraction is full re-index.** CodeGraph ships debounced incremental sync
   that the harness does not yet use.

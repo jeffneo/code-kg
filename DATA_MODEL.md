@@ -19,7 +19,7 @@ One checked-out repository at one pinned commit.
 
 | property | meaning |
 |---|---|
-| `id` | `repo:{host}/{owner}/{name}` — e.g. `repo:github.com/grafana/dskit` |
+| `id` | `repo:{host}/{owner}/{name}`, plus `/{dist}` when set — e.g. `repo:github.com/grafana/dskit`, `repo:github.com/apache/airflow/task-sdk` |
 | `name` | short id from `corpus.yaml` (`dskit`) |
 | `url` | clone URL |
 | `commit` | the pinned SHA this graph was built from |
@@ -38,8 +38,25 @@ function would mean redoing call resolution, which is the extractor's job.
 | `id` | `file:{repo_id}:{path}` |
 | `path` | repo-relative, forward-slashed |
 | `repo` | denormalised `Repo.id`, so filtering never needs a join |
-| `language` | file extension |
+| `language` | file extension, normalised by **us** — see below |
+| `module` | Python only: the dotted name this file is importable as (`airflow.sdk.definitions.dag`). Set by `make enrich` |
 | `communityId`, `betweenness`, `pagerank`, `isArticulationPoint` | written by `make gds` — see below |
+
+> **Why `language` is ours and not the extractor's.** Graphify and GitNexus
+> derive it from the extension (`py`); CodeGraph reports its own detected
+> language (`python`). `MERGE_FILE` assigns rather than coalesces, so whichever
+> extractor loaded last silently won, and the cycle projections — which filter
+> `language IN ['py','go']` — matched nothing at all. Normalised centrally in
+> `ids.language_of`, same reasoning as `exported`.
+
+> **`module` is what makes exact cross-boundary resolution possible.** It is the
+> Python analogue of Go's fully qualified import path: match an unresolved
+> import's full module path against the file that provides it and the answer is
+> exact, with no package declaration needed. It is the *only* rule that works
+> when two distributions publish into one namespace package, as Airflow's core
+> and task-sdk both do under `airflow` — there, the import name matches neither
+> distribution name, and declaring both as publishing `airflow` would make every
+> import match both repos and manufacture the very cycle we are looking for.
 
 ### `:Symbol` — 154,183
 
@@ -153,7 +170,10 @@ what makes them usable as ground truth.
 | type | pattern | count | meaning |
 |---|---|---|---|
 | `USES` | `(:Symbol)→(:ExternalRef)` | 72,001 | a symbol referenced something outside the repo |
-| `IMPORTS_EXT` | `(:File)→(:ExternalRef)` | 129,129 | a file imported something outside the repo; carries `line` |
+| `IMPORTS_EXT` | `(:File)→(:ExternalRef)` | 129,129 | a file imported something outside the repo; carries `line`, `context`, `guarded` |
+
+`IMPORTS_EXT` carries the same `context` classification as `IMPORTS`, plus
+`guarded` — see the note under the derived edges below.
 
 Two anchors because the extractors differ: Graphify resolves from a symbol
 node, CodeGraph and the source-derived pass attach to the file.
@@ -165,10 +185,32 @@ and `confidence`, so a reviewer can separate a fact from an inference.
 
 | type | pattern | count | meaning |
 |---|---|---|---|
-| `RESOLVES_TO` | `(:ExternalRef)→(:Symbol)` | 9,190 | a dangling reference bound to a real symbol in a sibling repo |
-| `IMPORTS_CROSS_REPO` | `(:File)→(:Symbol)` | 5,259 | file-level cross-repo import, with `line` |
-| `CALLS_CROSS_REPO` | `(:Symbol)→(:Symbol)` | 97 | symbol-level cross-repo call |
-| `DEPENDS_ON_REPO` | `(:Repo)→(:Repo)` | 9 | repo-level dependency, reconciled through `:Package`; `via` lists the packages |
+| `RESOLVES_TO` | `(:ExternalRef)→(:Symbol)` | 10,036 | a dangling reference bound to a real symbol in a sibling repo |
+| `IMPORTS_CROSS_REPO` | `(:File)→(:Symbol)` | 8,705 | file-level cross-repo import, with `line` |
+| `IMPORTS_FILE_CROSS_REPO` | `(:File)→(:File)` | 863 | **cross-boundary file dependency**, resolved by exact module path; carries `context`, `guarded`, `via_module`, `line` |
+| `CALLS_CROSS_REPO` | `(:Symbol)→(:Symbol)` | 862 | symbol-level cross-repo call |
+| `DEPENDS_ON_REPO` | `(:Repo)→(:Repo)` | 12 | repo-level dependency, reconciled through `:Package`; `via` lists the packages |
+
+> **Why `IMPORTS_FILE_CROSS_REPO` exists alongside `IMPORTS_CROSS_REPO`.** Every
+> other derived edge terminates on a `:Symbol`, which makes it hostage to how
+> completely an extractor enumerated declarations. The single most common
+> crossing import in corpus D is `from airflow.sdk import ...` (56 statements),
+> and `airflow/sdk/__init__.py` is a facade that re-exports — so it declares
+> almost none of those names and symbol-mediated resolution misses the most
+> important edge in the exhibit.
+>
+> This edge needs only two things we compute ourselves and exactly: the import
+> statement (AST) and `File.module`. No extractor is in the path, so no
+> extractor can weaken it. It is also the granularity module-level cycle
+> detection needs — cycles live between files, not between symbols.
+
+> **`guarded`** marks an import wrapped in `try: … except ImportError:`. It is
+> orthogonal to `context`, not another context value: a guarded module-level
+> import really does execute, so for cycle detection it is a genuine top-level
+> edge. What changes is what you can ask someone to *do*. In corpus D it moves
+> the actionable cut set from 7 import sites to **5** — two sit in
+> `except ModuleNotFoundError:` blocks with working fallbacks, where the SDK
+> already copes with core being absent.
 
 Confidence is graded by *how* the match was made, not guessed:
 
@@ -212,6 +254,7 @@ cross-links cannot masquerade as imports:
 | `sccId` | `modules` | top-level, **with** `__init__.py` | like-for-like against pylint, which makes no facade distinction |
 | `sccCoreId` | `modules_core` | top-level, facade-free | **the number to act on** |
 | `sccDesignId` | `modules_design` | top-level + `typing`, facade-free | design coupling; real, but never a runtime risk |
+| `sccXRepoId` | `modules_xrepo` | top-level, **plus cross-boundary edges** | components that span published artifacts — see below |
 
 The gap between `sccId` and `sccCoreId` is package-facade inflation: a package
 `__init__.py` that re-exports from submodules which import back from the package
@@ -222,6 +265,13 @@ Q15 pre-filters on `sccCoreId` and reports the other two as context. Go is
 absent from the results by language design, not omission — the Go compiler
 rejects circular package imports, so zero is the only correct answer, and
 getting zero is a check on the method.
+
+`modules_xrepo` is the one projection **no single-repo tool could build**: it
+unions intra-repo `IMPORTS` with the derived cross-boundary edges, so SCC finds
+components spanning separately published artifacts. Q17 filters to those. The
+distinction matters because an intra-repo cycle is a refactor, while a cycle
+across a published boundary is a release deadlock — neither side can ship
+without a compatible version of the other already existing.
 
 ---
 

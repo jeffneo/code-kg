@@ -489,3 +489,95 @@ WITH split(repo, '/')[-1]     AS repo,
      collect(DISTINCT path)[0..4] AS examples
 RETURN repo, test_files, examples
 ORDER BY test_files DESC;
+
+
+// ----------------------------------------------------------------------------
+// Q17 - CROSS-BOUNDARY DEPENDENCY CYCLES   (requires `make gds` for sccXRepoId)
+//
+// The one finding in this file that NO single-repo tool can produce even in
+// principle. Every other query is a better answer to a question the tools can
+// at least ask; this one is a question they cannot express, because when either
+// side is parsed the other end of the edge is out of scope.
+//
+// WHY THIS IS WORSE THAN AN INTRA-REPO CYCLE
+// ------------------------------------------
+// An intra-repo import cycle is a refactor - one commit, one reviewer. A cycle
+// across a published-artifact boundary is a RELEASE DEADLOCK: neither side can
+// be released without a compatible version of the other already existing. Teams
+// pay that permanently, in coordinated releases and pre-release pins, and no
+// single CI job ever sees it.
+//
+// The asymmetry is the actionable part. Measured on Airflow: 109 top-level
+// import statements from core into task-sdk, and 7 the other way. The cycle is
+// those 7. Cut them and a mutual dependency becomes a clean layering - so the
+// query reports the minority direction with file:line, which is a work item
+// rather than an observation.
+//
+// `declared` cross-checks the code finding against the manifests: both
+// pyproject.toml files require each other, so the cycle is not an artifact of
+// our resolution. Code and manifest agreeing is the strongest form this can take.
+// ----------------------------------------------------------------------------
+// IMPORTS_FILE_CROSS_REPO, not the symbol-mediated IMPORTS_CROSS_REPO: this edge
+// is resolved by exact module path with no extractor in the path, so the counts
+// are not hostage to how completely a tool enumerated declarations. It also
+// matters here specifically - the biggest crossing import in this corpus goes
+// through a facade `__init__.py` that declares almost nothing.
+// Top-level only. An `if TYPE_CHECKING:` import across the boundary is design
+// coupling, not a release deadlock, and counting it here would be the same
+// mistake the intra-repo query used to make.
+MATCH (a:File)-[x:IMPORTS_FILE_CROSS_REPO]->(b:File)
+WHERE x.context = 'toplevel'
+WITH a.repo AS src_repo, b.repo AS dst_repo,
+     count(DISTINCT x)                       AS import_edges,
+     count(DISTINCT a.path)                  AS importing_files,
+     // Split the sites by whether the code already copes with the import
+     // failing. Only the unguarded ones are work.
+     collect(DISTINCT CASE WHEN NOT coalesce(x.guarded, false)
+                           THEN a.path + ':' + toString(x.line) END)  AS hard_raw,
+     collect(DISTINCT CASE WHEN coalesce(x.guarded, false)
+                           THEN a.path + ':' + toString(x.line) END)  AS guarded_raw
+WITH src_repo, dst_repo, import_edges, importing_files,
+     [s IN hard_raw    WHERE s IS NOT NULL] AS hard_sites,
+     [s IN guarded_raw WHERE s IS NOT NULL] AS guarded_sites
+WITH collect({src: src_repo, dst: dst_repo, edges: import_edges,
+              files: importing_files,
+              hard: hard_sites, guarded: guarded_sites}) AS flows
+UNWIND flows AS forward
+// The reverse flow is what makes it a cycle. Reaching for it inside the same
+// collected list keeps this to one pass over the cross-repo edges.
+WITH flows, forward,
+     head([f IN flows WHERE f.src = forward.dst AND f.dst = forward.src]) AS back
+WHERE back IS NOT NULL
+  AND forward.src < forward.dst          // report each pair once, not twice
+// Manifest corroboration, and the count of modules SCC says are entangled
+// across the boundary.
+CALL (forward, back) {
+  OPTIONAL MATCH (ra:Repo {id: forward.src})-[:DEPENDS_ON_REPO]->(rb:Repo {id: forward.dst})
+  OPTIONAL MATCH (rb2:Repo {id: forward.dst})-[:DEPENDS_ON_REPO]->(ra2:Repo {id: forward.src})
+  RETURN (ra IS NOT NULL AND rb2 IS NOT NULL) AS declared_both_ways
+}
+WITH forward, back, declared_both_ways
+CALL (forward, back) {
+  MATCH (f:File) WHERE f.repo IN [forward.src, forward.dst] AND f.sccXRepoId IS NOT NULL
+  WITH f.sccXRepoId AS scc, count(*) AS n, count(DISTINCT f.repo) AS repos
+  WHERE n > 1 AND repos > 1
+  RETURN sum(n) AS entangled_modules, count(*) AS spanning_components
+}
+RETURN split(forward.src, '/')[-1]  AS distribution_a,
+       split(forward.dst, '/')[-1]  AS distribution_b,
+       forward.edges                AS a_to_b_imports,
+       back.edges                   AS b_to_a_imports,
+       declared_both_ways,
+       entangled_modules,
+       spanning_components,
+       // The cut set: the smaller direction is the cheaper one to remove, and
+       // within it only the UNGUARDED sites are actual work.
+       CASE WHEN back.edges <= forward.edges
+            THEN split(forward.dst, '/')[-1] + ' -> ' + split(forward.src, '/')[-1]
+            ELSE split(forward.src, '/')[-1] + ' -> ' + split(forward.dst, '/')[-1] END
+                                    AS cut_direction,
+       CASE WHEN back.edges <= forward.edges THEN back.hard
+            ELSE forward.hard END   AS cut_sites_must_fix,
+       CASE WHEN back.edges <= forward.edges THEN back.guarded
+            ELSE forward.guarded END AS cut_sites_already_guarded
+ORDER BY entangled_modules DESC, a_to_b_imports DESC;

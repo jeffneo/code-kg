@@ -149,7 +149,7 @@ def build_go(repos: list[dict], artifacts_root: Path, corpus: str) -> tuple[set,
     """
     publisher: dict[str, str] = {}
     for spec in repos:
-        rid = ids.repo_id(spec["url"])
+        rid = ids.repo_id_for(spec)
         for module in (spec.get("publishes") or []):
             publisher[module] = rid
 
@@ -160,7 +160,7 @@ def build_go(repos: list[dict], artifacts_root: Path, corpus: str) -> tuple[set,
     skipped: list[str] = []
     for spec in repos:
         try:
-            scans[ids.repo_id(spec["url"])] = load_goscan(artifacts_root, corpus, spec["id"])
+            scans[ids.repo_id_for(spec)] = load_goscan(artifacts_root, corpus, spec["id"])
         except FileNotFoundError:
             skipped.append(spec["id"])
 
@@ -241,7 +241,7 @@ def build(
     publisher: dict[str, str] = {}
     roots: dict[str, Path] = {}
     for spec in repos:
-        rid = ids.repo_id(spec["url"])
+        rid = ids.repo_id_for(spec)
         root = corpus_root / spec["id"]
         roots[rid] = root / spec["subpath"] if spec.get("subpath") else root
         for pkg in (spec.get("publishes") or []):
@@ -256,7 +256,7 @@ def build(
     unmatched: list[tuple[str, str, str]] = []   # import found, symbol not defined there
 
     for spec in repos:
-        src_repo = ids.repo_id(spec["url"])
+        src_repo = ids.repo_id_for(spec)
         root = roots[src_repo]
         for path in python_files(root):
             rel = str(path.relative_to(root))

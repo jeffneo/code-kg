@@ -86,7 +86,7 @@ def cmd_load(args: argparse.Namespace) -> None:
                 print(f"  {rid}: SKIP (no artifact - extraction failed or not run)")
                 continue
 
-            repo = ids.repo_id(spec["url"])
+            repo = ids.repo_id_for(spec)
             checkout = corpus_root / args.corpus / rid
             prov = mapper.provenance(artifact)
 
@@ -124,7 +124,13 @@ def cmd_load(args: argparse.Namespace) -> None:
                     })
 
             sub = checkout / spec["subpath"] if spec.get("subpath") else checkout
-            for dep in manifests.parse(ecosystem, sub):
+            # `subpath` is the extraction and module-naming root. The manifest is
+            # not always there: Airflow's distributions keep pyproject.toml one
+            # level above src/, and pointing extraction at that level would pull
+            # tests in and inflate the cycle with test-only coupling.
+            manifest_dir = (checkout / spec["manifest_subpath"]
+                            if spec.get("manifest_subpath") else sub)
+            for dep in manifests.parse(ecosystem, manifest_dir):
                 pkg_rows.append({
                     "id": ids.package_id(ecosystem, dep.name),
                     "name": ids.normalize_package_name(ecosystem, dep.name),
@@ -202,7 +208,7 @@ def cmd_enrich(args: argparse.Namespace) -> None:
 
     with db.store() as store:
         for spec in _repos(args.corpus):
-            repo = ids.repo_id(spec["url"])
+            repo = ids.repo_id_for(spec)
             root = corpus_root / spec["id"]
             sub = root / spec["subpath"] if spec.get("subpath") else root
             if not sub.is_dir():
@@ -225,7 +231,14 @@ def cmd_enrich(args: argparse.Namespace) -> None:
                 db.MERGE_FILE_IMPORTS,
                 internal_imports.classified_imports(repo, sub, ecosystem),
             )
-            suffix = f", {n_int} classified module imports" if n_int else ""
+            # The dotted module name each file provides. Enables exact cross-repo
+            # resolution by module path - see db.SET_FILE_MODULE.
+            n_mod = store.write_batched(
+                db.SET_FILE_MODULE,
+                internal_imports.module_rows(repo, sub, ecosystem),
+            )
+            suffix = (f", {n_int} classified module imports, {n_mod} module names"
+                      if n_int else "")
             print(f"  {spec['id']}: {n} source-derived import refs{suffix}")
 
 
@@ -293,8 +306,8 @@ def cmd_score(args: argparse.Namespace) -> None:
         print(f"  note: {diag['unmatched_imports']} imports named a corpus package but the "
               f"symbol was not discoverable in it (submodule imports); excluded from truth")
 
-    corpus_repos = [ids.repo_id(r["url"]) for r in present]
-    dir_to_repo = {r["id"]: ids.repo_id(r["url"]) for r in present}
+    corpus_repos = [ids.repo_id_for(r) for r in present]
+    dir_to_repo = {r["id"]: ids.repo_id_for(r) for r in present}
     with db.store() as store:
         predicted = scoring.predicted_edges(store, corpus_repos)
         predicted_plus = scoring.predicted_edges_with_source(store, corpus_repos)
@@ -394,7 +407,7 @@ def cmd_score_cycles(args: argparse.Namespace) -> None:
 
     with db.store() as store:
         for spec in _repos(args.corpus):
-            repo = ids.repo_id(spec["url"])
+            repo = ids.repo_id_for(spec)
             root = corpus_root / spec["id"]
             sub = root / spec["subpath"] if spec.get("subpath") else root
             if not sub.is_dir():

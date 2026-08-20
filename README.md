@@ -54,6 +54,24 @@ whose stated job is resolving circular module imports at runtime; pylint's
 `cyclic-import` finds them independently (`make score-cycles CORPUS=c`); and an
 AST scanner written separately from the loader agrees on the members.
 
+**D — `airflow-xrepo-cycle`**. A dependency cycle that **crosses a published
+artifact boundary** — the case no single-repo tool can see even in principle.
+`apache-airflow-core` and `apache-airflow-task-sdk` are separately published,
+separately versioned PyPI distributions that require each other in non-extra
+runtime dependencies (`airflow-core/pyproject.toml:154` and
+`task-sdk/pyproject.toml:51`). Where corpus C's cycles are a refactor, this one
+is a release deadlock: neither side can ship without a compatible version of the
+other already existing.
+
+Measured: 132 top-level import edges core → task-sdk, **7** the other way, of
+which **5 are unguarded** and two already sit in `except ImportError:` blocks
+with fallbacks. The cut set is those 5 sites, with line numbers.
+
+*Framing note:* these are two distributions inside one repository. What makes
+them separate dependency endpoints is independent versioning, publishing and
+release — which is what causes the deadlock. Say "distribution", not
+"repository".
+
 Ground truth comes from dependency manifests, not from hand-labelling. The
 extractors never see manifests as a graph — they parse source and hit an
 unresolvable external import — so scoring against them is a fair test. Corpus C
@@ -71,9 +89,9 @@ reads and which implements a different algorithm.
 ## Demo
 
 ```bash
-./demo.sh              # ten beats, paced, formatted tables
+./demo.sh              # thirteen beats, paced, formatted tables
 ./demo.sh 2 3 4        # just the core reveal
-PAUSE=0 ./demo.sh      # dry run, ~12s
+PAUSE=0 ./demo.sh      # dry run, ~20s
 ```
 
 [`DEMO.md`](DEMO.md) is the run of show: pre-flight checks, per-beat talking
@@ -123,6 +141,22 @@ make score CORPUS=a          # precision/recall vs source-derived truth
 make stats
 ```
 
+The cycle corpora follow the same sequence, with different scoring:
+
+```bash
+make corpus CORPUS=c && make sync && make extract CORPUS=c
+make load CORPUS=c && make enrich CORPUS=c && make gds
+make score-cycles CORPUS=c   # vs pylint, an independent oracle
+
+make corpus CORPUS=d && make sync && make extract CORPUS=d
+make load CORPUS=d && make enrich CORPUS=d && make link && make gds
+docker compose run --rm loader query q17   # the cross-boundary cycle
+```
+
+`make enrich` is **required** before any cycle query: the import-context
+classification that makes those findings trustworthy comes from that pass, and
+without it the cycle queries return nothing rather than something wrong.
+
 To re-verify an extractor's artifact shape after a version bump:
 
 ```bash
@@ -133,7 +167,8 @@ make inspect REPO=neo4j-python-driver
 
 Verified end to end against **Neo4j 2026.07.1 enterprise** (APOC 2026.07.1, GDS
 2026.07.0), graphify 0.9.43, and the pinned commits in `corpus/corpus.lock.yaml`.
-All seven queries in `cypher/90_queries.cypher` execute clean, no deprecations.
+All seventeen queries in `cypher/90_queries.cypher` execute clean on all four
+corpora (`./validate.sh` → 68/68), no deprecations.
 
 | stage | result |
 |---|---|
@@ -471,7 +506,7 @@ at the output*, not by the score. Budget for both.
 make gds
 ```
 
-Requires GDS Enterprise. 166,375 nodes and 812,132 relationships project and
+Requires GDS Enterprise. 186,861 nodes and 979,062 relationships project and
 run all four algorithms in **8 seconds**.
 
 The projection is deliberately heterogeneous — Symbol *and* File. Symbol→Symbol

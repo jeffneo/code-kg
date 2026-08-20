@@ -35,7 +35,7 @@ import ast
 from pathlib import Path
 from typing import Iterator
 
-from . import ids
+from . import ids, internal_imports
 from .oracle import SKIP_DIRS, python_files
 
 
@@ -81,12 +81,25 @@ def external_imports(repo: str, repo_root: Path, ecosystem: str) -> Iterator[dic
         except (SyntaxError, ValueError):
             continue
 
+        # Execution context, same classification as intra-repo imports. Without
+        # it a cross-boundary cycle can be held together by an
+        # `if TYPE_CHECKING:` import that never runs - which is precisely the
+        # bug that made the intra-repo cycle finding wrong. The context rides
+        # on IMPORTS_EXT and is carried onto the derived cross-repo edge.
+        contexts = internal_imports.import_contexts(tree)
+        # A module-level import inside `try: ... except ImportError:` executes,
+        # so it is a real top-level edge - but the code tolerates its absence,
+        # which is the difference between "must fix" and "already handled".
+        guarded_of = internal_imports.guarded_nodes(tree)
+
         seen: set[tuple[str, str]] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom):
                 continue
             if node.level or not node.module:
                 continue  # relative - resolves inside this repo
+            context = contexts.get(id(node), internal_imports.TOPLEVEL)
+            guarded = id(node) in guarded_of
             root_module = node.module.split(".")[0]
             for alias in node.names:
                 if alias.name == "*":
@@ -104,5 +117,7 @@ def external_imports(repo: str, repo_root: Path, ecosystem: str) -> Iterator[dic
                     "file": ids.file_id(repo, rel),
                     "repo": repo,
                     "line": node.lineno,
+                    "context": context,
+                    "guarded": guarded,
                     "extractor": "source",
                 }

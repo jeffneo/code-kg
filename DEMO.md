@@ -1,11 +1,11 @@
 # codekg — run of show
 
-A ~18 minute demo. Twelve beats, one idea: **the cross-repo edges do not exist in
+A ~21 minute demo. Thirteen beats, one idea: **the cross-repo edges do not exist in
 any single-repo tool, and once they exist a different class of question becomes
 answerable.**
 
 ```bash
-./demo.sh              # all twelve beats, paced, [enter] between each
+./demo.sh              # all thirteen beats, paced, [enter] between each
 ./demo.sh 2 3 4        # just the core reveal
 PAUSE=0 ./demo.sh      # dry run, no waiting
 ```
@@ -20,7 +20,7 @@ prospect is a bad four minutes.
 ```bash
 make up                        # Neo4j healthy
 make nes                       # Studio at :8080, Bloom included
-docker compose run --rm -T loader stats   # sanity: ~166k symbols, 9 repos
+docker compose run --rm -T loader stats   # sanity: ~178k symbols, 12 repos
 PAUSE=0 ./demo.sh              # full dry run, ~2 min, confirms every beat
 ```
 
@@ -29,9 +29,9 @@ Check these four things:
 | check | expected | if wrong |
 |---|---|---|
 | `CALL gds.license.state()` | `isLicensed: TRUE` | GDS runs community-tier; beats 8–9 degrade. See README prerequisites |
-| `make stats` → Repo | 9 | A corpus was not loaded — re-run `make load` for the missing one |
-| Studio sign-in | works | Beats 1–12 are terminal-only and unaffected; only the Bloom close-out needs it |
-| `./validate.sh` | 16/16 both corpora | Something drifted; do not present until it is green |
+| `make stats` → Repo | 12 | A corpus was not loaded — re-run `make load` for the missing one |
+| Studio sign-in | works | Beats 1–13 are terminal-only and unaffected; only the Bloom close-out needs it |
+| `./validate.sh` | 17/17 on all four corpora | Something drifted; do not present until it is green |
 
 Have a second terminal open on `make shell` for the inevitable "can you show
 me X?"
@@ -44,8 +44,9 @@ Timings assume you talk while it runs. Beats 2→3 are the whole demo; everythin
 after is depth. **If you only get five minutes, run 2, 3, 6.**
 
 ### 1 — What is loaded  *(1 min)*
-Nine real OSS repos: Neo4j's own Python packages and Grafana's Go stack. Three
-independent extractors over all of them.
+Twelve real OSS distributions: Neo4j's own Python packages, Grafana's Go stack,
+SQLAlchemy, and two Airflow distributions. Three independent extractors over all
+of them.
 
 > "Nothing here is synthetic. This is your code and Grafana's."
 
@@ -92,7 +93,9 @@ Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
 
 ### 7 — Circular dependencies  *(3 min)*   `CORPUS=c`
-Run on corpus C — SQLAlchemy. **Four** cyclic components, **22 modules**, the
+Q15 is global, so it lists every component in the graph: four in SQLAlchemy
+(corpus C) plus one in `airflow-core`. Talk to the SQLAlchemy ones. **Four**
+cyclic components, **22 modules**, the
 largest two being **7 modules each in the ORM core**. Longest facade-free cycle
 is 3 hops:
 
@@ -168,6 +171,67 @@ harness.
 Also worth a sentence: `mimir`/`loki` once appeared to have cycles that were
 Markdown files cross-linking, because Graphify indexes `.md` and treats a link as
 an import. Filtered out now.
+
+### 7b — The cycle that crosses a release boundary  *(3 min)*   `CORPUS=d`  **← the strongest single result**
+Everything up to here is a *better* answer to a question the tools can at least
+ask. This is a question they **cannot express**: when either side is parsed, the
+other end of the edge is out of scope.
+
+`apache-airflow-core` and `apache-airflow-task-sdk` are separately published,
+separately versioned PyPI distributions that **require each other**:
+
+```
+airflow-core/pyproject.toml:154   apache-airflow-task-sdk<1.5.0,>=1.4.0
+task-sdk/pyproject.toml:51        apache-airflow-core<3.5.0,>=3.4.0
+```
+
+> "An import cycle inside a repo is a refactor — one commit, one reviewer. This
+> is a release deadlock. Neither of these can ship without a compatible version
+> of the other already existing on PyPI. Somebody is paying for that every
+> release, and no single CI job sees it."
+
+Run `q17`. What lands:
+
+| | |
+|---|---|
+| core → task-sdk | 132 top-level import edges |
+| task-sdk → core | **7** |
+| declared both ways in manifests | **true** |
+| modules entangled across the boundary | 86, in 2 components |
+| **cut set** | **5 sites, with line numbers** |
+
+**Two things to draw out.**
+
+*The asymmetry is the finding.* 132 one way, 7 the other. Cut the 7 and a mutual
+dependency becomes a clean layering. That is a work item, not an observation.
+
+*Five, not seven — and say why.* Two of the seven sit inside
+`except ModuleNotFoundError:` / `except (ImportError, AttributeError):` with
+working fallbacks; the SDK already treats core as optional there. The query
+reports those separately.
+
+> "We're not handing you seven problems. Two of them your own code already
+> handles. Here are the five that actually block you."
+
+That distinction is the whole credibility play. Presenting all seven as work in
+front of a maintainer who wrote those `try/except` blocks would lose the room.
+
+**And `declared_both_ways: true` is the corroboration.** The code finding and the
+manifests agree, and they come from different places — source AST versus
+`pyproject.toml`, which no extractor reads as a graph.
+
+**If asked "isn't this one repo?" — yes, and answer it head-on.** These are two
+distributions in `apache/airflow`. What makes them two dependency endpoints is
+that they version, publish and release independently, which is exactly what
+creates the deadlock. Same shape as two repos in a corporate polyrepo, which is
+where your audience will actually meet it.
+
+Worth mentioning what it took: two distributions sharing a clone URL collapsed
+into one `:Repo` node, which makes the cycle literally unrepresentable — hence a
+`dist` segment in the repo id. And both publish into the same `airflow` namespace
+package, so the import name matches *neither* distribution name; resolution had
+to move to exact module paths. Declaring both as publishing `airflow` would have
+made every import match both sides and **manufactured** the cycle.
 
 ### 8 — How much should you believe?  *(2 min)*
 Three extractors vote on every edge. Only **~15% of call edges are corroborated
@@ -246,7 +310,7 @@ table, Q13 as a bar chart.
 |---|---|
 | A query returns 0 rows | Wrong symbol id. `./demo.sh 1` then `make shell` and re-find it — ids contain `#` and must be single-quoted |
 | `make gds` errors | Beats 7, 10 and 11. Q15 needs `sccId` from GDS; the others need communities and centrality |
-| Studio won't sign in | Stay in the terminal. All twelve beats are terminal-only |
+| Studio won't sign in | Stay in the terminal. All thirteen beats are terminal-only |
 | Studio page blank / connection refused | It exits when Neo4j restarts under it. `docker compose --profile nes up -d` — it now has `restart: unless-stopped` |
 | Neo4j unhealthy | `make up` and wait for healthy; do not present against a starting DB |
 | Numbers differ from this doc | Expected if the corpus was re-fetched. `corpus.lock.yaml` pins commits — say so, it's a strength |

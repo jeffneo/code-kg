@@ -14,12 +14,14 @@ declare -a CASES=(
   "b|sym:repo:github.com/grafana/dskit:user/id.go#InjectOrgID|repo:github.com/grafana/dskit"
   # Paths are relative to the corpus `subpath` (lib/), not the repo root.
   "c|sym:repo:github.com/sqlalchemy/sqlalchemy:sqlalchemy/orm/session.py#Session|repo:github.com/sqlalchemy/sqlalchemy"
+  # Corpus D repo ids carry a `dist` segment: two distributions, one clone URL.
+  "d|sym:repo:github.com/apache/airflow/task-sdk:airflow/sdk/api/client.py#Client|repo:github.com/apache/airflow/task-sdk"
 )
 fail=0
 for case in "${CASES[@]}"; do
   IFS='|' read -r corpus sym lib <<< "$case"
   printf "corpus %s:\n" "$corpus"
-  for q in q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16; do
+  for q in q1 q2 q3 q4 q5 q6 q7 q8 q9 q10 q11 q12 q13 q14 q15 q16 q17; do
     case $q in
       q4)       args=(query "$q" --param "lib_repo=$lib") ;;
       q1|q2|q3|q11) args=(query "$q" --param "changed=$sym") ;;

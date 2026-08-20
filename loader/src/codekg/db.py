@@ -181,6 +181,13 @@ WITH e, row
 MATCH (f:File {id: row.file})
 MERGE (f)-[u:IMPORTS_EXT]->(e)
   SET u.line       = row.line,
+      // Same toplevel/typing/deferred classification as intra-repo IMPORTS, and
+      // carried onto IMPORTS_FILE_CROSS_REPO by the linking pass. A cross-repo
+      // cycle held together by an `if TYPE_CHECKING:` import is not a runtime
+      // cycle, and counting it as one would repeat the intra-repo mistake at a
+      // bigger blast radius.
+      u.context    = coalesce(row.context, u.context),
+      u.guarded    = coalesce(row.guarded, u.guarded),
       u.extractors = coll.distinct(coalesce(u.extractors, []) + row.extractor)
 """
 
@@ -200,7 +207,23 @@ MATCH (dst:File {id: row.dst})
 MERGE (src)-[i:IMPORTS]->(dst)
   SET i.extractors = coll.distinct(coalesce(i.extractors, []) + row.extractor),
       i.context    = coalesce(row.context, i.context),
+      i.guarded    = coalesce(row.guarded, i.guarded),
       i.line       = coalesce(row.line, i.line)
+"""
+
+# The dotted module name a Python file is importable as. Set by `enrich` from
+# the same AST pass that classifies imports.
+#
+# This is what makes exact cross-repo resolution possible when the import name
+# and the distribution name differ - and it is the ONLY thing that works when
+# two distributions publish into one namespace package, as Airflow's core and
+# task-sdk both do under `airflow`. Matching the top-level module against
+# declared packages cannot separate them; matching the full module path against
+# the file that actually provides it is exact.
+SET_FILE_MODULE = """
+UNWIND $batch AS row
+MATCH (f:File {id: row.file})
+SET f.module = row.module
 """
 
 DELETE_REPO_SUBGRAPH = """

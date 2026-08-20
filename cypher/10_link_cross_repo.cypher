@@ -104,6 +104,105 @@ MERGE (ref)-[r:RESOLVES_TO]->(target)
                 r.cross_repo = true;
 
 
+// -- Python: exact, by full module path.
+//
+// The Python analogue of the Go longest-prefix rule, and strictly better than
+// the top-level-module rule above wherever it applies: `File.module` is the
+// dotted name that file is importable as, so matching an unresolved import's
+// full module path against it identifies the providing file exactly.
+//
+// This exists because the top-level rule cannot work at all when two
+// separately published distributions share one namespace package. Airflow's
+// apache-airflow-core and apache-airflow-task-sdk both publish under `airflow`,
+// so `from airflow.sdk import ...` has root module `airflow`, which matches
+// NEITHER distribution name. Declaring both as publishing `airflow` would be
+// worse than useless - every import would match both repos and the tool would
+// manufacture the very cycle it is supposed to discover.
+//
+// Runs after the top-level rule so that its ON CREATE wins where both apply.
+MATCH (ref:ExternalRef {ecosystem: 'python'})
+WHERE ref.symbol IS NOT NULL AND ref.module IS NOT NULL
+MATCH (provider:File {module: ref.module})
+// enrich.py emits EVERY absolute import, including ones that resolve inside the
+// importing repo, so without this guard the rule also binds a repo's own
+// internal imports to its own files. Those are not wrong, they are just not
+// this pass's job, and they would bury the cross-repo edges in noise. Restrict
+// to refs that some OTHER repo actually imports.
+WHERE EXISTS {
+  MATCH (consumer:File)-[:IMPORTS_EXT]->(ref)
+  WHERE consumer.repo <> provider.repo
+}
+MATCH (provider)-[:DECLARES]->(target:Symbol)
+WHERE target.name = ref.symbol
+  AND target.exported = true
+WITH ref, target, count(DISTINCT provider) AS providers
+MERGE (ref)-[r:RESOLVES_TO]->(target)
+  ON CREATE SET r.method     = 'python-module-path',
+                // Exact when one file provides the module path. More than one
+                // means a genuinely ambiguous namespace package, so say so
+                // rather than asserting certainty.
+                r.confidence = CASE WHEN providers = 1 THEN 1.0 ELSE 0.6 END,
+                r.ambiguous  = providers > 1,
+                r.providers  = providers,
+                r.cross_repo = true;
+
+
+// -- Python: file-level cross-boundary imports, by exact module path.
+//
+// Deliberately NOT symbol-mediated, and that is the point. Every other derived
+// edge here needs a :Symbol at the far end, which makes it hostage to how well
+// an extractor enumerated declarations. The single most common crossing import
+// in corpus D is `from airflow.sdk import ...` - 56 statements - and
+// `airflow/sdk/__init__.py` is a facade that re-exports from submodules, so it
+// DECLARES almost none of those names. Symbol-mediated resolution misses the
+// most important edge in the exhibit.
+//
+// This needs only two things we compute ourselves and exactly: the import
+// statement (AST) and the module name each file is importable as (module_index).
+// No extractor is in the path, so no extractor can weaken it.
+//
+// It is also the edge module-level cycle detection needs - cycles live between
+// files, not between symbols. See the `modules_xrepo` projection in 20_gds.cypher.
+MATCH (consumer:File)-[i:IMPORTS_EXT]->(ref:ExternalRef {ecosystem: 'python'})
+WHERE ref.module IS NOT NULL
+MATCH (provider:File {module: ref.module})
+WHERE consumer.repo <> provider.repo
+// Strongest dependency wins per file pair. Two files can be linked by several
+// imports; the pair is described by its hardest link.
+//
+//   4  toplevel, unguarded  - executes on import, no fallback. Must fix.
+//   3  toplevel, guarded    - executes, but wrapped in try/except ImportError
+//                             with a working fallback. Already handled.
+//   2  typing               - never executes.
+//   1  deferred             - executes on call.
+//
+// The guarded tier is not pedantry. In corpus D it moves the actionable cut set
+// from 7 import sites to 5: two of the seven sit in `except ModuleNotFoundError:`
+// blocks where the SDK already copes with core being absent. Presenting all
+// seven as work would have been wrong in front of a maintainer.
+WITH consumer, provider, i, ref,
+     CASE
+       WHEN coalesce(i.context, 'toplevel') = 'toplevel'
+            AND NOT coalesce(i.guarded, false) THEN 4
+       WHEN coalesce(i.context, 'toplevel') = 'toplevel' THEN 3
+       WHEN i.context = 'typing'                         THEN 2
+       ELSE 1
+     END AS rank
+ORDER BY rank DESC
+WITH consumer, provider,
+     head(collect({ctx: coalesce(i.context, 'toplevel'),
+                   guarded: coalesce(i.guarded, false),
+                   line: i.line, module: ref.module})) AS best
+MERGE (consumer)-[x:IMPORTS_FILE_CROSS_REPO]->(provider)
+SET x.method     = 'python-module-path',
+    x.confidence = 1.0,
+    x.via_module = best.module,
+    x.line       = best.line,
+    x.context    = best.ctx,
+    x.guarded    = best.guarded,
+    x.cross_repo = true;
+
+
 // ----------------------------------------------------------------------------
 // Step 3: lift repo-level dependency to a symbol-level call path.
 //

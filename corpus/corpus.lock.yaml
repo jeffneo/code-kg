@@ -1,4 +1,4 @@
-_locked_at: '2026-08-20T03:24:07+00:00'
+_locked_at: '2026-08-20T04:17:51+00:00'
 a:
   graph-data-science-client:
     sha: ecac13c25f14d3cfd76ed950996a999abb608322
@@ -42,3 +42,12 @@ c:
     sha: 16d00eca61cfc690b2709642f4a2656fb6424875
     subpath: lib
     url: https://github.com/sqlalchemy/sqlalchemy
+d:
+  airflow-core:
+    sha: 259fe2d3e80f1ca4871f090fded5cd5025eb1cdf
+    subpath: airflow-core/src
+    url: https://github.com/apache/airflow
+  task-sdk:
+    sha: 259fe2d3e80f1ca4871f090fded5cd5025eb1cdf
+    subpath: task-sdk/src
+    url: https://github.com/apache/airflow

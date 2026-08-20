@@ -30,6 +30,15 @@ FOR (n:Symbol) ON (n.name);
 CREATE INDEX external_ref_module IF NOT EXISTS
 FOR (n:ExternalRef) ON (n.module);
 
+// The `python-module-path` linking rule joins ExternalRef.module against the
+// file that provides that module path. Without this index that step is a label
+// scan of every File per unresolved import.
+CREATE INDEX file_module IF NOT EXISTS
+FOR (n:File) ON (n.module);
+
+CREATE INDEX file_repo IF NOT EXISTS
+FOR (n:File) ON (n.repo);
+
 CREATE INDEX package_name IF NOT EXISTS
 FOR (n:Package) ON (n.name);
 

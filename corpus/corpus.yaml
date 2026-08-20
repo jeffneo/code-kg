@@ -120,6 +120,60 @@ corpora:
         publishes: [sqlalchemy]
         tier: core
 
+  d:
+    name: airflow-xrepo-cycle
+    description: >
+      A dependency cycle that CROSSES a distribution boundary - the case no
+      single-repo tool can see, because when either side is parsed the other
+      end is not in scope.
+
+      apache-airflow-core and apache-airflow-task-sdk are separately published,
+      separately versioned PyPI distributions that REQUIRE EACH OTHER at
+      runtime, in non-extra dependencies:
+
+        airflow-core/pyproject.toml:154   apache-airflow-task-sdk<1.5.0,>=1.4.0
+        task-sdk/pyproject.toml:51        apache-airflow-core<3.5.0,>=3.4.0
+
+      Those ranges are the exhibit. Neither can be released without the other
+      already existing in a compatible version, which is the release deadlock a
+      cross-boundary cycle actually costs you.
+
+      The code cycle is real, top-level, and asymmetric: 109 import statements
+      core -> task-sdk against 7 the other way. The 7 are the cut set. That is
+      an actionable finding, and it is only visible with both sides in one
+      graph.
+
+      HONEST FRAMING: these are two distributions inside ONE repository
+      (apache/airflow), not two repositories. What makes them separate
+      dependency endpoints is that they version, publish and release
+      independently - which is what causes the deadlock. Say "distribution", not
+      "repository", and the exhibit holds up. `dist` gives each its own :Repo id
+      so they do not collapse into one node.
+
+      Both distributions also publish into the SAME `airflow` namespace package,
+      so the import name matches neither distribution name. That breaks the
+      top-level-module resolution rule and is why the linking pass needed exact
+      module-path matching - see `python-module-path` in 10_link_cross_repo.cypher.
+    ecosystem: python
+    repos:
+      - id: airflow-core
+        url: https://github.com/apache/airflow
+        ref: main
+        dist: airflow-core           # own :Repo id; a shared clone URL would collide
+        subpath: airflow-core/src    # extraction + module naming root
+        manifest_subpath: airflow-core   # pyproject.toml sits a level above src/
+        publishes: [apache-airflow-core]
+        tier: core
+
+      - id: task-sdk
+        url: https://github.com/apache/airflow
+        ref: main
+        dist: task-sdk
+        subpath: task-sdk/src
+        manifest_subpath: task-sdk
+        publishes: [apache-airflow-task-sdk]
+        tier: core
+
 # Generated code inflates node counts and wrecks centrality metrics - your
 # "god nodes" become generated deep-copy functions. Excluded at extract time.
 exclude:
