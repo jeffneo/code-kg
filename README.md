@@ -78,6 +78,42 @@ unresolvable external import — so scoring against them is a fair test. Corpus 
 follows the same rule with a different oracle: pylint, which the loader never
 reads and which implements a different algorithm.
 
+## Known vulnerabilities
+
+`make vulns` joins OSV advisories onto the packages already in the graph — 767
+advisories across 81 of 402 packages. It's the cheapest layer here: the join key
+`(ecosystem, name)` is already exact, which is the point. The hard part was the
+code graph.
+
+What it adds over an SCA tool is **reachability**. SCA says "you depend on X and
+X has CVE-Y" — it never parsed your source. On this graph the same finding
+becomes "…and here are the files that import it, at these lines":
+
+```
+llm-graph-builder   starlette ==0.52.1   CVE-2026-54283   HIGH   affected   2 files
+```
+
+`query q19` is the cell nobody else has — a package the code **imports** but the
+manifest never **declares**, that also carries advisories. Verified in source:
+`graph-data-science-client` declares `requests` but not `urllib3`, while
+`src/graphdatascience/session/aura_api.py:16` does
+`from urllib3.util.retry import Retry`. urllib3 has 38 advisories. An SCA scan of
+that repo reads the manifest, so it never attributes them there. Seven findings
+of this shape across the corpora, three in Neo4j-owned repos.
+
+Status is three-valued and never collapsed: **75 affected, 828 not_affected, 365
+indeterminate**. `indeterminate` means the declared constraint permits both
+affected and safe versions — a real argument for pinning, not a scan failure.
+
+Two cautions worth repeating out loud:
+
+- **Zero direct imports ≠ unused.** `urllib3` shows zero import sites in repos
+  that use `requests` on every call. This narrows *first-party* exposure only.
+- **This is not a security gate.** No dataflow or taint analysis exists anywhere
+  in this schema, so nothing here finds injection or unsafe deserialization, and
+  recall is far too low for a blocking check. Supply-chain visibility and a
+  hunting aid — not CI enforcement.
+
 ## Documents
 
 | file | for |

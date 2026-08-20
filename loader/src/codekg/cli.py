@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from . import cyclescore, enrich, ids, internal_imports, manifests, oracle, scoring
+from . import cyclescore, enrich, ids, internal_imports, manifests, oracle, scoring, vulns
 from . import db
 from .mappers import codegraph, gitnexus, graphify
 
@@ -390,6 +390,60 @@ def cmd_score(args: argparse.Namespace) -> None:
         print(f"\nwrote {args.json}")
 
 
+DECLARATIONS = """
+MATCH (r:Repo)-[d:DEPENDS_ON]->(p:Package)
+RETURN r.id          AS repo,
+       p.id          AS package,
+       p.name        AS package_name,
+       p.ecosystem   AS ecosystem,
+       d.version_spec AS version_spec
+"""
+
+
+def cmd_vulns(args: argparse.Namespace) -> None:
+    """Attach OSV advisories to the packages already in the graph.
+
+    Global, not per-corpus: a CVE is a property of a package, not of a corpus,
+    and the same package appears in several.
+    """
+    with db.store() as store:
+        declarations = store.query(DECLARATIONS)
+        packages = sorted({(d["ecosystem"], d["package_name"]) for d in declarations
+                           if d["ecosystem"] in vulns.OSV_ECOSYSTEM})
+        print(f"querying OSV for {len(packages)} packages "
+              f"({', '.join(sorted(vulns.OSV_ECOSYSTEM))})...")
+
+        advisories = vulns.fetch(packages, timeout=args.timeout)
+        n_pkgs = len(advisories)
+        n_adv = sum(len(v) for v in advisories.values())
+        if not n_adv:
+            print("OSV returned nothing. Offline, or the package names do not match "
+                  "OSV's - check a name by hand before assuming the graph is clean.")
+            return
+        print(f"  {n_pkgs} packages carry advisories, {n_adv} advisory records")
+
+        if args.replace:
+            store.query(db.DELETE_VULN_LAYER)
+
+        n_v = store.write_batched(db.MERGE_VULNERABILITY,
+                                  vulns.vulnerability_rows(advisories))
+        n_a = store.write_batched(db.MERGE_AFFECTS, vulns.affects_rows(advisories))
+
+        rows = list(vulns.assessment_rows(declarations, advisories))
+        n_r = store.write_batched(db.MERGE_AFFECTED_BY, rows)
+
+        counts = Counter(r["status"] for r in rows)
+        print(f"  {n_v} distinct advisories, {n_a} AFFECTS edges, {n_r} repo assessments")
+        print(f"\n{'status':<16}{'edges':>8}")
+        print("-" * 24)
+        for status in (vulns.AFFECTED, vulns.INDETERMINATE, vulns.NOT_AFFECTED):
+            print(f"{status:<16}{counts.get(status, 0):>8}")
+        print("\n`indeterminate` is not a failure of the scan - it is a dependency")
+        print("declared as a floating range, whose vulnerability status genuinely")
+        print("cannot be known until something resolves it. Run `query q18` for the")
+        print("ones that are both affected AND actually imported.")
+
+
 def cmd_score_cycles(args: argparse.Namespace) -> None:
     """Score the graph's cycle finding against pylint's cyclic-import check.
 
@@ -514,6 +568,12 @@ def main() -> None:
     p.add_argument("--merge", metavar="PATH",
                    help="also score a `graphify merge-graphs` output as a baseline arm")
     p.set_defaults(fn=cmd_score)
+
+    p = sub.add_parser("vulns", help="attach OSV advisories to packages in the graph")
+    p.add_argument("--timeout", type=int, default=60, help="per-request OSV timeout")
+    p.add_argument("--replace", action="store_true",
+                   help="drop the existing vulnerability layer first")
+    p.set_defaults(fn=cmd_vulns)
 
     p = sub.add_parser("score-cycles", help="score cycle finding against pylint")
     p.add_argument("corpus")

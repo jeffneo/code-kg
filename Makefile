@@ -8,7 +8,7 @@ VOL := codekg_corpus
 PY := $(shell command -v uv >/dev/null 2>&1 && echo "uv run --quiet --with pyyaml python3" || echo python3)
 
 .PHONY: help up down clean corpus sync extract load link demo stats shell logs \
-        dump restore score score-cycles gds
+        dump restore score score-cycles gds vulns
 
 help:
 	@echo "Vertical slice, in order:"
@@ -27,6 +27,7 @@ help:
 	@echo "  make score CORPUS=a        precision/recall vs source-derived truth"
 	@echo "  make gds                   org-level Leiden / betweenness / articulation points"
 	@echo "  make score-cycles CORPUS=c cycle finding vs pylint (needs make gds first)"
+	@echo "  make vulns                 attach OSV advisories; then query q18 / q19"
 	@echo ""
 	@echo "  make dump / restore        back up or restore the loaded graph"
 	@echo ""
@@ -223,6 +224,11 @@ score:
 # `make gds` first (reads sccId / sccCoreId / sccDesignId). Python corpora only.
 score-cycles:
 	$(COMPOSE) run --rm -T loader score-cycles $(CORPUS) </dev/null
+
+# Known vulnerabilities from OSV, joined onto the packages already in the graph.
+# Global, not per-corpus: a CVE is a property of a package. Needs network.
+vulns:
+	$(COMPOSE) run --rm -T loader vulns --replace </dev/null
 
 stats:
 	$(COMPOSE) run --rm -T loader stats </dev/null

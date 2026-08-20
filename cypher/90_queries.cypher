@@ -581,3 +581,124 @@ RETURN split(forward.src, '/')[-1]  AS distribution_a,
        CASE WHEN back.edges <= forward.edges THEN back.guarded
             ELSE forward.guarded END AS cut_sites_already_guarded
 ORDER BY entangled_modules DESC, a_to_b_imports DESC;
+
+
+// ----------------------------------------------------------------------------
+// Q18 - REACHABLE VULNERABILITIES   (requires `make vulns`)
+//
+// The join an SCA tool cannot make and a code graph has no data for.
+//
+// An SCA tool reports "you depend on X, and X has CVE-Y". It never parsed your
+// source, so it cannot say whether you touch X at all. A code graph knows every
+// import site but has no advisory feed. Put both in one store and the finding
+// becomes "X has CVE-Y, you pinned an affected version, AND these 4 files
+// import it" - with file:line.
+//
+// THREE CELLS, AND THE THIRD IS THE ONE NOBODY ELSE HAS
+// -----------------------------------------------------
+//   declared + imported      real exposure, with import sites
+//   declared + NOT imported  unused dependency - attack surface you can delete
+//   imported + NOT declared  PHANTOM (see Q8). Not in the SBOM, so an SCA scan
+//                            of this repo never attributes the CVE to it.
+//
+// STATUS IS GRADED, AND `indeterminate` IS NOT A BUG
+// --------------------------------------------------
+// We know what a manifest DECLARES, not what a build RESOLVED. An exact pin
+// gives a definite verdict; a floating range (`>=5.25.0,<7.0.0`) genuinely
+// cannot be decided until something resolves it. That is a security finding in
+// its own right, not a gap in the scan - so the three statuses are never
+// collapsed into one number. See vulns.py.
+// ----------------------------------------------------------------------------
+MATCH (r:Repo)-[a:AFFECTED_BY]->(v:Vulnerability)
+WHERE a.status IN ['affected', 'indeterminate']
+  AND v.withdrawn IS NULL
+MATCH (p:Package {id: a.package})
+// Reachability: does this repo's code actually import the package, at a point
+// that executes on import? `context` matters here for the same reason it does
+// for cycles - a TYPE_CHECKING-only import is not a runtime exposure.
+CALL (r, p) {
+  MATCH (f:File {repo: r.id})-[i:IMPORTS_EXT]->(e:ExternalRef)
+  WHERE e.root_module = p.name AND i.context = 'toplevel'
+  RETURN count(DISTINCT f)                                        AS importing_files,
+         collect(DISTINCT f.path + ':' + toString(i.line))[0..4]  AS import_sites,
+         collect(DISTINCT e.symbol)[0..6]                          AS symbols_used
+}
+// Collapse by advisory identity. OSV aggregates several databases, so one CVE
+// arrives as a GHSA record AND a PYSEC record - the same finding twice, with
+// severity populated on only one of them. Grouping on the CVE (falling back to
+// the OSV id when there is no CVE alias) and taking the best-populated severity
+// is what stops the output double-counting.
+WITH split(r.id, '/')[-1]       AS repo,
+     p.name                     AS package,
+     coalesce(v.cve, v.id)      AS advisory,
+     a.status                   AS status,
+     a.declared                 AS declared,
+     importing_files, import_sites, symbols_used,
+     collect(DISTINCT v.severity) AS severities
+WITH repo, package, advisory, status, declared,
+     importing_files, import_sites, symbols_used,
+     head([s IN ['CRITICAL','HIGH','MODERATE','LOW'] WHERE s IN severities]) AS severity
+RETURN repo, package, advisory, severity, status, declared,
+       importing_files,
+       // NOT "unused". Zero direct imports does not mean the package is
+       // unused - urllib3 shows zero here while `requests` uses it internally
+       // on every call. Telling someone to drop it on this evidence would break
+       // their build. What this actually narrows is *first-party* exposure:
+       // whether YOUR code touches the vulnerable surface directly.
+       CASE WHEN importing_files = 0 THEN 'no direct import - may still be used transitively'
+            WHEN status = 'affected' THEN 'REACHABLE and affected - act on this'
+            ELSE 'reachable, but status needs the version resolved' END AS assessment,
+       symbols_used,
+       import_sites
+// Definite findings first, then by how much code touches them. The reverse -
+// which the first version did - buries a confirmed hit under a widely-imported
+// maybe.
+ORDER BY CASE status WHEN 'affected' THEN 0 ELSE 1 END,
+         CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1
+                       WHEN 'MODERATE' THEN 2 ELSE 3 END,
+         importing_files DESC
+LIMIT 30;
+
+
+// ----------------------------------------------------------------------------
+// Q19 - VULNERABILITIES IN A PHANTOM DEPENDENCY
+//
+// The cell neither tool category can reach. A package this repo IMPORTS but
+// never DECLARES, that also carries a known advisory.
+//
+// Why it is invisible elsewhere: an SCA tool reads the manifest, and the package
+// is not in it, so the CVE is never attributed to this repo. A single-repo code
+// graph sees the import but has no advisory feed and no sibling repo to resolve
+// it against. The finding exists only where manifests, source, and an advisory
+// feed are in the same store.
+// ----------------------------------------------------------------------------
+MATCH (consumer:Repo)-[:CONTAINS]->(f:File)-[i:IMPORTS_EXT]->(e:ExternalRef)
+WHERE i.context = 'toplevel'
+MATCH (v:Vulnerability)-[:AFFECTS]->(p:Package {name: e.root_module})
+WHERE v.withdrawn IS NULL
+  AND NOT (consumer)-[:DEPENDS_ON]->(p)
+  // A package does not declare itself. Without this, SQLAlchemy's own absolute
+  // self-imports (`from sqlalchemy import ...`) read as an undeclared
+  // dependency on itself - a false positive, and an obvious one on stage.
+  AND NOT (consumer)-[:PUBLISHES]->(p)
+WITH consumer, p,
+     count(DISTINCT v)                              AS advisories,
+     collect(DISTINCT coalesce(v.cve, v.id))[0..5]  AS examples,
+     collect(DISTINCT f.path)                       AS all_files
+// Test-only imports are a much weaker finding: a missing test dependency is a
+// CI problem, not shipped exposure. Separated rather than dropped, because
+// "only tests import it" is itself the useful answer.
+WITH consumer, p, advisories, examples, all_files,
+     [x IN all_files WHERE NOT x =~ '(?i).*(^|/)(tests?|conftest)(/|\\.|_).*'
+                       AND NOT x =~ '(?i).*(_test\\.py|test_.*\\.py)$'] AS shipped
+RETURN split(consumer.id, '/')[-1]  AS repo,
+       p.name                       AS undeclared_package,
+       advisories,
+       examples,
+       size(shipped)                AS shipped_files,
+       size(all_files)              AS total_files,
+       CASE WHEN size(shipped) = 0 THEN 'test-only - a CI dependency gap, not shipped exposure'
+            ELSE 'SHIPPED CODE imports an undeclared package with known CVEs' END AS assessment,
+       shipped[0..4]                AS example_files
+ORDER BY size(shipped) DESC, advisories DESC
+LIMIT 20;

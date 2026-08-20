@@ -226,6 +226,53 @@ MATCH (f:File {id: row.file})
 SET f.module = row.module
 """
 
+# --- vulnerability layer -----------------------------------------------------
+#
+# Joins on (ecosystem, package name), an identity that is already exact - so it
+# is strictly less work than the name resolution the code graph needed. See
+# vulns.py for why the version verdict is graded rather than boolean.
+
+MERGE_VULNERABILITY = """
+UNWIND $batch AS row
+MERGE (v:Vulnerability {id: row.id})
+  SET v.cve       = row.cve,
+      v.aliases   = row.aliases,
+      v.summary   = row.summary,
+      v.severity  = row.severity,
+      v.cvss      = row.cvss,
+      v.cwes      = row.cwes,
+      v.published = row.published,
+      v.modified  = row.modified,
+      v.withdrawn = row.withdrawn
+"""
+
+MERGE_AFFECTS = """
+UNWIND $batch AS row
+MATCH (v:Vulnerability {id: row.vuln})
+MATCH (p:Package {id: row.package})
+MERGE (v)-[a:AFFECTS]->(p)
+  SET a.introduced    = row.introduced,
+      a.fixed         = row.fixed,
+      a.version_count = row.version_count
+"""
+
+# The verdict for ONE repo's declared version. Distinct from AFFECTS, which is
+# the advisory's own statement about the package and carries no repo context.
+MERGE_AFFECTED_BY = """
+UNWIND $batch AS row
+MATCH (r:Repo {id: row.repo})
+MATCH (v:Vulnerability {id: row.vuln})
+MERGE (r)-[a:AFFECTED_BY {package: row.package}]->(v)
+  SET a.status   = row.status,
+      a.reason   = row.reason,
+      a.declared = row.declared,
+      a.resolved = row.resolved
+"""
+
+DELETE_VULN_LAYER = """
+MATCH (v:Vulnerability) DETACH DELETE v
+"""
+
 DELETE_REPO_SUBGRAPH = """
 MATCH (r:Repo {id: $repo})
 OPTIONAL MATCH (r)-[:CONTAINS]->(f:File)

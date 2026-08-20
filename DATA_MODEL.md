@@ -2,18 +2,17 @@
 
 Every node label, relationship type and property in the graph, what it means,
 which stage creates it, and why it exists. Counts are from the loaded corpora
-(9 repos, 3 extractors) as a sense of scale.
+(12 distributions across 4 corpora, 3 extractors) as a sense of scale.
 
-The single most important thing to understand before reading the rest: **five
-labels do the work, and only two relationship types cross a repository
-boundary.** Everything else is per-repo structure that any of the three
+The single most important thing to understand before reading the rest: **six labels
+do the work, and only four relationship types cross a repository boundary.** Everything else is per-repo structure that any of the three
 extractors could have produced on its own.
 
 ---
 
 ## Node labels
 
-### `:Repo` — 9
+### `:Repo` — 12
 
 One checked-out repository at one pinned commit.
 
@@ -27,7 +26,7 @@ One checked-out repository at one pinned commit.
 | `corpus` | `a` \| `b` — scopes scoring so one corpus is never measured against another's edges |
 | `extractors` | which tools contributed |
 
-### `:File` — 13,120
+### `:File` — 15,487
 
 A source file. Also the anchor for imports, because **an import statement
 belongs to a file, not to a function** — attributing it to a particular
@@ -58,7 +57,7 @@ function would mean redoing call resolution, which is the extractor's job.
 > distribution name, and declaring both as publishing `airflow` would make every
 > import match both repos and manufacture the very cycle we are looking for.
 
-### `:Symbol` — 154,183
+### `:Symbol` — 177,585
 
 A named code entity: function, method, class, struct, interface, variable,
 constant, property.
@@ -85,7 +84,7 @@ constant, property.
 > `is_exported = 0` for every Python node. Using a shared rule keeps agreement
 > about extraction rather than about differing export conventions.
 
-### `:Package` — 344
+### `:Package` — 404
 
 A published or consumed package identity — the join key between repos.
 
@@ -95,7 +94,28 @@ A published or consumed package identity — the join key between repos.
 | `name` | normalised: Python lowercases and folds `_`/`.` to `-` (PEP 503); Go paths are case-sensitive and untouched |
 | `ecosystem` | `python` \| `go` |
 
-### `:ExternalRef` — 19,413
+### `:Vulnerability` — 767
+
+One OSV advisory. Added by `make vulns`; the only label in the schema that comes
+from outside the corpus.
+
+| property | meaning |
+|---|---|
+| `id` | OSV's id, usually a `GHSA-…` |
+| `cve` | the `CVE-…` alias, which is what people actually search for |
+| `aliases` | every id this advisory is known by |
+| `severity` | `CRITICAL` / `HIGH` / `MODERATE` / `LOW`, from `database_specific` |
+| `cvss` | CVSS vector string |
+| `cwes` | CWE ids |
+| `published`, `modified`, `withdrawn` | advisory lifecycle; **filter on `withdrawn IS NULL`** |
+
+> **One CVE can arrive as several `:Vulnerability` nodes.** OSV aggregates GHSA,
+> PYSEC and Go advisory databases, so the same CVE appears more than once with
+> severity populated on only some records. Q18 groups on `cve` and takes the
+> best-populated severity — without that the output double-counts, which it did
+> in the first version.
+
+### `:ExternalRef` — 25,687
 
 **A reference that pointed outside its own repository.** The dangling end of a
 would-be cross-repo edge.
@@ -121,11 +141,11 @@ does.
 
 | type | pattern | count | meaning |
 |---|---|---|---|
-| `CONTAINS` | `(:Repo)→(:File)` | 13,120 | file membership |
-| `DECLARES` | `(:File)→(:Symbol)` | 154,183 | the file defines this symbol |
-| `IN_REPO` | `(:Symbol)→(:Repo)` | 154,183 | denormalised shortcut, so repo-scoped queries skip a hop |
-| `CALLS` | `(:Symbol)→(:Symbol)` | 276,364 | intra-repo call, inheritance or instantiation |
-| `IMPORTS` | `(:File)→(:File)` | 90,104 | **intra-repo module dependency** — what circular-import detection runs on; carries `context` and `line` |
+| `CONTAINS` | `(:Repo)→(:File)` | 15,487 | file membership |
+| `DECLARES` | `(:File)→(:Symbol)` | 177,585 | the file defines this symbol |
+| `IN_REPO` | `(:Symbol)→(:Repo)` | 177,585 | denormalised shortcut, so repo-scoped queries skip a hop |
+| `CALLS` | `(:Symbol)→(:Symbol)` | 302,379 | intra-repo call, inheritance or instantiation |
+| `IMPORTS` | `(:File)→(:File)` | 100,387 | **intra-repo module dependency** — what circular-import detection runs on; carries `context` and `line` |
 
 > **`IMPORTS.context` is the most consequential property in the schema for
 > anything cycle-related.** It is `toplevel`, `typing`, or `deferred`, and no
@@ -159,18 +179,50 @@ static call is 1.0, an inferred one 0.7, a dynamic-dispatch guess is capped at
 
 | type | pattern | count | meaning |
 |---|---|---|---|
-| `PUBLISHES` | `(:Repo)→(:Package)` | 8 | this repo ships this package |
-| `DEPENDS_ON` | `(:Repo)→(:Package)` | 516 | declared in `requirements.txt`, `pyproject.toml`, `go.mod`; carries `version_spec` and `source` |
+| `PUBLISHES` | `(:Repo)→(:Package)` | 11 | this repo ships this package |
+| `DEPENDS_ON` | `(:Repo)→(:Package)` | 610 | declared in `requirements.txt`, `pyproject.toml`, `go.mod`; carries `version_spec` and `source` |
 
 Manifests are read by the loader, never by an extractor. That independence is
 what makes them usable as ground truth.
+
+### Vulnerabilities — from OSV, not from any extractor
+
+| type | pattern | count | meaning |
+|---|---|---|---|
+| `AFFECTS` | `(:Vulnerability)→(:Package)` | 777 | the advisory's own statement about the package; carries `introduced`, `fixed` |
+| `AFFECTED_BY` | `(:Repo)→(:Vulnerability)` | 1,268 | **the verdict for one repo's declared version**; carries `status`, `reason`, `declared`, `resolved`, and `package` as a key property |
+
+`AFFECTS` is version-independent advisory fact. `AFFECTED_BY` is the assessment,
+and its `status` is deliberately three-valued:
+
+| `status` | count | meaning |
+|---|---|---|
+| `affected` | 75 | the declared constraint permits only affected versions |
+| `not_affected` | 828 | it permits **no** affected version — a definite all-clear |
+| `indeterminate` | 365 | it permits some affected and some safe versions |
+
+> **`indeterminate` is a finding, not a scan failure.** We know what a manifest
+> *declares*, not what a build *resolved*. `>=5.25.0,<7.0.0` genuinely has no
+> vulnerability status until something resolves it — which is a security
+> argument for pinning, stated in the data.
+>
+> Crucially it is not simply "the pin was a range". The test is set
+> intersection: does the declared constraint permit any version this advisory
+> affects? `sqlalchemy>=1.4.49` permits none of the versions CVE-2012-0805
+> affects, so the answer is a definite `not_affected`. Getting that wrong made
+> the first version of this layer useless — it reported 2012-era CVEs against
+> modern pins as "indeterminate" purely because the constraint was a range.
+> Fixing it moved 221 assessments from `indeterminate` to `not_affected`.
+>
+> Go pseudo-versions (`v0.0.0-20260806130614-…`) stay `indeterminate`: they
+> cannot be ordered against semver bounds, and guessing is worse than saying so.
 
 ### Dangling references — the raw material
 
 | type | pattern | count | meaning |
 |---|---|---|---|
-| `USES` | `(:Symbol)→(:ExternalRef)` | 72,001 | a symbol referenced something outside the repo |
-| `IMPORTS_EXT` | `(:File)→(:ExternalRef)` | 129,129 | a file imported something outside the repo; carries `line`, `context`, `guarded` |
+| `USES` | `(:Symbol)→(:ExternalRef)` | 63,613 | a symbol referenced something outside the repo |
+| `IMPORTS_EXT` | `(:File)→(:ExternalRef)` | 149,112 | a file imported something outside the repo; carries `line`, `context`, `guarded` |
 
 `IMPORTS_EXT` carries the same `context` classification as `IMPORTS`, plus
 `guarded` — see the note under the derived edges below.

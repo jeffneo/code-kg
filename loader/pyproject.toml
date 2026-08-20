@@ -10,6 +10,8 @@ dependencies = [
     # the answer key the graph is measured against, the way manifests are for
     # cross-repo edges. See cyclescore.py.
     "pylint>=3.2",
+    # PEP 440 comparison for the vulnerability layer's version verdicts.
+    "packaging>=24.0",
 ]
 
 [project.scripts]

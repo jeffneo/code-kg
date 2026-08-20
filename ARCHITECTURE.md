@@ -398,10 +398,58 @@ exposing `load`, `provenance`, `files`, `symbols`, `calls`, `file_imports`,
 per repo. For a non-Python/Go ecosystem you also need a manifest parser in
 `manifests.py` and a resolution rule in `10_link_cross_repo.cypher`.
 
-**Adding a data source** (CVEs, incidents, deployments) — these attach to nodes
-that already exist: CVEs to `:Package`, incidents and deployments to `:Repo` or
-`:Symbol`. They are *easier* joins than what is already proven, because they are
-ID-based rather than requiring name resolution.
+**Adding a data source** (incidents, deployments) — these attach to nodes that
+already exist, by id rather than by name resolution, which makes them *easier*
+than anything already proven here. The CVE layer below is the worked example.
+
+---
+
+## The vulnerability layer
+
+`make vulns` pulls OSV advisories for every `:Package` already in the graph. It
+is the cheapest layer in the repo — the join key is `(ecosystem, name)`, already
+exact — and it demonstrates the point that the hard part was the code graph.
+
+**What it adds that an SCA tool cannot.** An SCA tool reports "you depend on X,
+and X has CVE-Y". It never parsed your source, so it cannot say whether you
+touch X. Sitting on a graph that already knows every import site, the same
+finding becomes "…and here are the files that import it, at these lines".
+
+Three cells matter, and only a joined graph has all three:
+
+| | meaning |
+|---|---|
+| declared + imported | real first-party exposure, with `file:line` |
+| declared + not imported | narrows *first-party* surface — **not** "unused", see below |
+| **imported + not declared** | **phantom.** Not in the SBOM, so an SCA scan of this repo never attributes the CVE to it |
+
+The third cell is invisible to both tool categories on their own, and it is not
+hypothetical. Measured, and verified in source:
+`graph-data-science-client/pyproject.toml` declares `requests` but not
+`urllib3`, while `src/graphdatascience/session/aura_api.py:16` does
+`from urllib3.util.retry import Retry`. urllib3 carries 38 advisories. Six more
+of the same shape across the corpora, three of them in Neo4j-owned repos.
+
+**Status is three-valued on purpose.** We know what a manifest *declares*, not
+what a build *resolved*, so the verdict is `affected` / `not_affected` /
+`indeterminate` and those are never collapsed into one number. The test is set
+intersection — does the declared constraint permit any version this advisory
+affects? — not "is it pinned". That distinction is what makes the output usable:
+the first version reported CVE-2012-0805 against a modern SQLAlchemy as
+`indeterminate` purely because the constraint was a range, and 221 assessments
+moved to a definite `not_affected` once intersection replaced the pin lookup.
+
+**Two things to be careful about when presenting it.**
+
+- **Zero direct imports does not mean unused.** `urllib3` shows zero import
+  sites in repos that use `requests` on every call. What this narrows is
+  first-party exposure, not whether the package is needed. Advising someone to
+  drop a dependency on this evidence would break their build.
+- **This is not a security gate.** See *Known limits*: there is no dataflow or
+  taint analysis here, so nothing in this graph finds an injection or an unsafe
+  deserialization. The layer answers "what do we depend on, is it declared, is
+  it pinned, and does our code touch it" — supply-chain visibility, not
+  vulnerability discovery.
 
 ---
 
@@ -429,6 +477,14 @@ ID-based rather than requiring name resolution.
   `IMPORTS_FILE_CROSS_REPO` is resolved from `File.module`, which only the Python
   path populates. Go would need the module-prefix rule extended to file
   granularity.
+- **This is not a security tool, and the CVE layer does not make it one.** There
+  is no dataflow or taint analysis anywhere in this schema — the graph has call
+  edges, not data flow — so nothing here finds injection, XSS, path traversal or
+  unsafe deserialization. No secret scanning, no authz modelling. And security
+  analysis needs low *false negatives*, which is precisely what this harness
+  does not offer: 0.536 artifact-only recall on corpus B, and only ~15% of call
+  edges corroborated by all three extractors. **Position it as supply-chain
+  visibility and a hunting aid, never as a CI gate.**
 - **Context filtering matters more than it looks on the cross-boundary edges.**
   Of 863 raw edges, 248 (29%) are `typing` or `deferred` — not runtime
   dependencies. Reporting them would inflate every cross-boundary cycle claim by

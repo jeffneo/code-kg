@@ -108,6 +108,31 @@ beat6() {
   wait_key
 }
 
+beat6b() {
+  hr; bold "6b. The same defect, with CVEs attached  (needs 'make vulns')"
+  q q19
+  say "Beat 6 showed an undeclared dependency. This is why it matters."
+  dim "   graph-data-science-client declares 'requests', not 'urllib3' - but"
+  dim "   src/graphdatascience/session/aura_api.py:16 imports urllib3.util.retry"
+  dim "   directly, and urllib3 carries 38 advisories. An SCA tool reads the"
+  dim "   manifest, so it never attributes those CVEs here. Not in the SBOM."
+  q q18
+  say "And for the reachable ones: advisory, severity, status, AND import sites."
+  dim "   llm-graph-builder starlette==0.52.1 CVE-2026-54283 HIGH affected, 2 files."
+  dim "   SCA cannot say whether you touch it - it never parsed your source."
+  say "The cheapness IS the argument: this joined on (ecosystem, name), already exact."
+  dim "   Everything else here had to resolve names across repos. This just joined."
+  dim "   The hard part was the code graph. CVEs, incidents, deployments, ownership"
+  dim "   all attach the same way."
+  say "Say both caveats before anyone else does:"
+  dim "   1. Zero direct imports does NOT mean unused - urllib3 shows zero in repos"
+  dim "      that use requests on every call. This narrows FIRST-PARTY exposure."
+  dim "   2. No dataflow or taint analysis exists in this schema, so no injection,"
+  dim "      no XSS, no unsafe deserialization. Recall is too low for a CI gate."
+  dim "   Volunteering that boundary is what makes the other claims credible."
+  wait_key
+}
+
 beat7() {
   hr; bold "7. Circular dependencies  (corpus C - SQLAlchemy)"
   q q15
@@ -202,7 +227,7 @@ beat12() {
   wait_key
 }
 
-BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat7 beat7b beat8 beat9 beat10 beat11 beat12)
+BEATS=(beat1 beat2 beat3 beat4 beat5 beat6 beat6b beat7 beat7b beat8 beat9 beat10 beat11 beat12)
 
 if [[ $# -eq 0 ]]; then
   for b in "${BEATS[@]}"; do $b; done

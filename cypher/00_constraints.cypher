@@ -39,6 +39,18 @@ FOR (n:File) ON (n.module);
 CREATE INDEX file_repo IF NOT EXISTS
 FOR (n:File) ON (n.repo);
 
+// Vulnerability layer. `id` is OSV's (usually a GHSA); `cve` is the alias people
+// actually search for, and several OSV records can share one CVE.
+CREATE CONSTRAINT vulnerability_id IF NOT EXISTS
+FOR (n:Vulnerability) REQUIRE n.id IS UNIQUE;
+
+CREATE INDEX vulnerability_cve IF NOT EXISTS
+FOR (n:Vulnerability) ON (n.cve);
+
+// Q18/Q19 join advisories to import sites through ExternalRef.root_module.
+CREATE INDEX external_ref_root_module IF NOT EXISTS
+FOR (n:ExternalRef) ON (n.root_module);
+
 CREATE INDEX package_name IF NOT EXISTS
 FOR (n:Package) ON (n.name);
 

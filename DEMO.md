@@ -1,11 +1,11 @@
 # codekg — run of show
 
-A ~21 minute demo. Thirteen beats, one idea: **the cross-repo edges do not exist in
+A ~23 minute demo. Fourteen beats, one idea: **the cross-repo edges do not exist in
 any single-repo tool, and once they exist a different class of question becomes
 answerable.**
 
 ```bash
-./demo.sh              # all thirteen beats, paced, [enter] between each
+./demo.sh              # all fourteen beats, paced, [enter] between each
 ./demo.sh 2 3 4        # just the core reveal
 PAUSE=0 ./demo.sh      # dry run, no waiting
 ```
@@ -30,8 +30,8 @@ Check these four things:
 |---|---|---|
 | `CALL gds.license.state()` | `isLicensed: TRUE` | GDS runs community-tier; beats 8–9 degrade. See README prerequisites |
 | `make stats` → Repo | 12 | A corpus was not loaded — re-run `make load` for the missing one |
-| Studio sign-in | works | Beats 1–13 are terminal-only and unaffected; only the Bloom close-out needs it |
-| `./validate.sh` | 17/17 on all four corpora | Something drifted; do not present until it is green |
+| Studio sign-in | works | Beats 1–14 are terminal-only and unaffected; only the Bloom close-out needs it |
+| `./validate.sh` | 19/19 on all four corpora | Something drifted; do not present until it is green |
 
 Have a second terminal open on `make shell` for the inevitable "can you show
 me X?"
@@ -91,6 +91,56 @@ works only because `langchain-neo4j` pulls the driver in transitively.
 
 Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
+
+### 6b — The same defect, with CVEs attached  *(2 min)*   `make vulns` first
+Beat 6 showed an undeclared dependency. This shows why that matters.
+
+Run `q19`. A package the code **imports** but the manifest never **declares**,
+that also carries known advisories:
+
+```
+graph-data-science-client   urllib3    38 advisories   src/graphdatascience/session/aura_api.py
+langchain-neo4j             pydantic    4 advisories   3 shipped files
+airflow-core                gunicorn    6 advisories   airflow/api_fastapi/gunicorn_app.py
+```
+
+> "Their pyproject declares `requests`, not `urllib3`. But `aura_api.py` line 16
+> imports `urllib3.util.retry` directly. An SCA tool reads the manifest, so it
+> will never attribute a urllib3 CVE to this repo. It isn't in the SBOM."
+
+Then `q18` for the reachable ones — advisory, severity, status, **and the import
+sites**:
+
+```
+llm-graph-builder   starlette ==0.52.1   CVE-2026-54283   HIGH   affected   2 files
+```
+
+> "SCA says 'you depend on starlette and it has a CVE'. It never parsed the
+> source, so it can't tell you whether you touch it. This says which two files
+> do, and at which lines."
+
+**The cheapness is the argument.** This layer joins on `(ecosystem, name)` — an
+identity that was already exact. It took no name resolution at all.
+
+> "Everything else in here had to resolve names across repos. This just joined.
+> That's the point — the hard part was the code graph, and it's done. CVEs,
+> incidents, deployments, ownership all attach the same way."
+
+**Two things to say before anyone else does.**
+
+*Zero direct imports does not mean unused.* `urllib3` shows zero import sites in
+repos that use `requests` on every call. This narrows first-party exposure, not
+whether the package is needed. Say it, or someone will assume you're advising
+them to delete a live dependency.
+
+*And say what it is not.* There is no dataflow or taint analysis anywhere in this
+schema, so it finds no injection, no XSS, no unsafe deserialization. Recall is
+also far too low for a blocking check.
+
+> "This is supply-chain visibility and a hunting aid. I would not put it in CI as
+> a gate, and I'd tell your security team that up front."
+
+Volunteering that boundary is what makes the rest of the claims credible.
 
 ### 7 — Circular dependencies  *(3 min)*   `CORPUS=c`
 Q15 is global, so it lists every component in the graph: four in SQLAlchemy
@@ -310,7 +360,7 @@ table, Q13 as a bar chart.
 |---|---|
 | A query returns 0 rows | Wrong symbol id. `./demo.sh 1` then `make shell` and re-find it — ids contain `#` and must be single-quoted |
 | `make gds` errors | Beats 7, 10 and 11. Q15 needs `sccId` from GDS; the others need communities and centrality |
-| Studio won't sign in | Stay in the terminal. All thirteen beats are terminal-only |
+| Studio won't sign in | Stay in the terminal. All fourteen beats are terminal-only |
 | Studio page blank / connection refused | It exits when Neo4j restarts under it. `docker compose --profile nes up -d` — it now has `restart: unless-stopped` |
 | Neo4j unhealthy | `make up` and wait for healthy; do not present against a starting DB |
 | Numbers differ from this doc | Expected if the corpus was re-fetched. `corpus.lock.yaml` pins commits — say so, it's a strength |
@@ -334,5 +384,18 @@ will find if you overstate it.
 - **Not** "the agreement numbers are clean." On Go they're a **lower bound**:
   ~20,853 graphify-only methods are an unfixed naming divergence, not real
   disagreement.
+- **Not** "it finds security vulnerabilities." It finds **supply-chain
+  visibility**: undeclared dependencies, unpinned versions, and whether your code
+  imports a package with a known advisory. There is no dataflow or taint analysis
+  anywhere in the schema, so no injection, XSS, path traversal or unsafe
+  deserialization — those need taint tracking from source to sink and nothing
+  here carries it. No secret scanning, no authz modelling.
+- **Not** "put it in CI as a gate." Security checks need low *false negatives*,
+  and recall here is 0.536 artifact-only on corpus B with ~15% of call edges
+  corroborated by all three extractors. Hunting aid, not enforcement — and say
+  so before their security lead asks.
+- **Not** "zero direct imports means the dependency is unused." `urllib3` shows
+  zero import sites in repos that call `requests` on every request. It narrows
+  *first-party* exposure only; advising a deletion on that basis breaks builds.
 - **Do** lead with what survives all of it: **the cross-repo edges exist nowhere
   else, and every one carries its inference method and confidence.**
