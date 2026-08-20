@@ -88,6 +88,38 @@ corpora:
         publishes: [github.com/grafana/tempo]
         tier: full
 
+  c:
+    name: sqlalchemy-cycles
+    description: >
+      One repo, one job: circular dependencies that are real and provable.
+      Deliberately NOT part of the cross-repo scoring - a single repo has no
+      cross-repo truth to measure, and mixing it into corpus A would pollute
+      those numbers.
+
+      Why SQLAlchemy. Ground truth arrives three independent ways, which is the
+      same standard the manifest-derived cross-repo oracle is held to:
+
+        1. The maintainers say so, as a named subsystem. lib/sqlalchemy/util/
+           preloaded.py exists to "resolve circular module imports at runtime".
+           A module whose stated job is the problem is not arguable.
+        2. pylint's cyclic-import check reports them independently.
+           `make score-cycles CORPUS=c` scores the graph against it.
+        3. Two distinct 7-module runtime cycles in the ORM core, top-level and
+           facade-free, confirmed against an AST scanner written separately
+           from the loader.
+
+      For contrast the same repo carries a 98-module DESIGN-time component once
+      TYPE_CHECKING edges are included - real coupling, zero runtime risk. That
+      gap is the exhibit, not a single big number.
+    ecosystem: python
+    repos:
+      - id: sqlalchemy
+        url: https://github.com/sqlalchemy/sqlalchemy
+        ref: main
+        subpath: lib            # src-layout: the importable root is lib/, not the repo root
+        publishes: [sqlalchemy]
+        tier: core
+
 # Generated code inflates node counts and wrecks centrality metrics - your
 # "god nodes" become generated deep-copy functions. Excluded at extract time.
 exclude:

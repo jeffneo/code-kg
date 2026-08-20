@@ -44,9 +44,21 @@ paths are fully qualified and name the publishing repo, so the answer key is
 exact and free. One-to-many fan-out makes the blast-radius result land visually.
 `--full` adds Loki and Tempo and turns a fast loop into a slow one.
 
+**C — `sqlalchemy-cycles`**. One repo, one job: circular dependencies that are
+real and provable. Kept out of the cross-repo scoring on purpose — a single repo
+has no cross-repo truth, and folding it into corpus A would pollute those
+numbers. SQLAlchemy earns the slot because the ground truth arrives three
+independent ways: the maintainers ship
+[`lib/sqlalchemy/util/preloaded.py`](https://github.com/sqlalchemy/sqlalchemy/blob/main/lib/sqlalchemy/util/preloaded.py)
+whose stated job is resolving circular module imports at runtime; pylint's
+`cyclic-import` finds them independently (`make score-cycles CORPUS=c`); and an
+AST scanner written separately from the loader agrees on the members.
+
 Ground truth comes from dependency manifests, not from hand-labelling. The
 extractors never see manifests as a graph — they parse source and hit an
-unresolvable external import — so scoring against them is a fair test.
+unresolvable external import — so scoring against them is a fair test. Corpus C
+follows the same rule with a different oracle: pylint, which the loader never
+reads and which implements a different algorithm.
 
 ## Documents
 

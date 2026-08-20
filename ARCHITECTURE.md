@@ -47,6 +47,16 @@ Clones at pinned SHAs, writes `corpus.lock.yaml`.
 the answer key, and a demo whose numbers move between runs is not a demo. The
 lock file is committed; the checkouts are not.
 
+**A bug worth knowing about, because it is a good illustration of the failure
+mode this whole harness is built to catch.** The lock writer passed its rows to
+Python through a pipe while `python -` was already taking its program from
+stdin via a heredoc. The rows were silently discarded, every corpus locked as
+`{}`, and refetches fell back to the branch ref. The lock file existed, was
+committed, and guaranteed nothing — for the entire life of the project until
+someone read the file. It now writes through a temp file and refuses to write an
+empty lock. Same shape as the `llm-graph-builder` finding: **the artifact that
+was supposed to pin the version was present and vacuous.**
+
 ### 2. Extract — `extractors/*/extract.sh`
 
 Each tool runs **unmodified**, in its own container, against a **filtered copy**
@@ -153,6 +163,64 @@ that answers a coarser question first is often the way to make the fine-grained
 traversal affordable.** GDS is not only for analytics; here it is a query
 planner.
 
+### Cycle detection: classify the edge before you count it
+
+Performance was the easy half. Correctness was not, and getting it wrong once is
+the most instructive thing in this repo.
+
+None of the three extractors record *where* in a file an import appears, so
+three different things arrive as one `IMPORTS` edge: a top-level import that
+executes, an `if TYPE_CHECKING:` import that **never** executes, and a
+function-body import that runs on call and is usually a deliberate cycle-break.
+
+Conflating them produced a confident, wrong finding: the neo4j-python-driver
+reported as one 102-module component with an 11-hop cycle. Classified top-level
+and facade-free, the driver has **zero** cycles — the component being quoted was
+held together by two `TYPE_CHECKING` edges. The fallback number offered at the
+time, "3 real modules," was the same error one level down: all three of those
+edges are `TYPE_CHECKING` too.
+
+So `internal_imports.py` derives intra-repo import edges from source with an AST
+pass and labels each `toplevel` / `typing` / `deferred`. The projections filter
+on it. Three consequences worth defending:
+
+- **The finding is now falsifiable.** `make score-cycles` scores it against
+  pylint's `cyclic-import`, a different tool with a different algorithm. On
+  SQLAlchemy: **recall 1.000** — every one of the 77 modules pylint names, no
+  misses.
+- **The arms are a ladder, and the gap is the point.** 184 modules at pylint's
+  own granularity (all contexts, facades included) → 159 top-level only → **22
+  top-level and facade-free**. Each step removes a class of edge that is not a
+  runtime cycle. pylint sits at the top of that ladder because it counts
+  function-scoped imports — so it reports cycles the standard cycle-breaking
+  idiom has already broken.
+- **We name 107 modules pylint does not, and they are real.** Spot-checked end
+  to end: `dialects/mssql/pymssql.py → base.py → mssql/__init__.py →
+  pymssql.py`, all three edges top-level and confirmed in source. pylint appears
+  not to model `from . import X` as executing the package's `__init__`.
+- **It beats the standard tool on structure, not volume.** pylint reports
+  overlapping *chains*, and the chain count is not even stable — 78, 74 and 72
+  across identical runs, while the module set held at 77. SCC reports components
+  and enumerates each cycle once. "How many distinct problems do I have" is not
+  recoverable from pylint's output at all.
+
+**Go's zero is a real check on the method.** The Go compiler rejects circular
+package imports, so the correct answer is known in advance — and over **83,529
+top-level Go import edges across 3,559 files, the pipeline returns zero cyclic
+components.** A false-positive bug in cycle detection would almost certainly
+surface somewhere in a corpus that size, so agreeing with a compile-time
+guarantee at that scale is worth more than any single positive finding.
+
+Worth knowing where those edges come from: Graphify emits almost no Go File→File
+imports (mimir 6, loki 1, tempo 0) because it resolves Go imports to external
+package references. GitNexus does emit them (loki 41,481, tempo 15,538). So the
+Go check exists only because a second extractor was in the harness — which is
+the argument for three extractors, arriving from an unexpected direction.
+
+The transferable lesson: **an edge type that merges semantically different
+relationships will produce results that are precise, fast, and wrong.** Ours did
+for several days.
+
 ### Confidence graded by method, never flat
 
 A Go module-prefix match is exact by construction and gets 1.0. A Python
@@ -191,6 +259,24 @@ them is a fair test rather than a leak.
 - One-to-many fan-out — the shape that lands visually.
 - Proves the approach is not Python-specific.
 - Contains the vendoring failure mode.
+
+**Corpus C — `sqlalchemy/sqlalchemy`, one repo, for circular dependencies.**
+
+Deliberately outside the cross-repo scoring: a single repo has no cross-repo
+truth, and folding it into corpus A would pollute those numbers.
+
+It is here because cycle ground truth arrives three independent ways, which is
+the same standard the manifest oracle is held to:
+
+1. **The maintainers say so, as a named subsystem.**
+   `lib/sqlalchemy/util/preloaded.py` exists to resolve circular module imports
+   at runtime. A module whose stated job is the problem is not arguable.
+2. **pylint's `cyclic-import` reports them independently** — `make score-cycles`.
+3. **Two distinct 7-module top-level, facade-free cycles in the ORM core**,
+   confirmed against an AST scanner written separately from the loader.
+
+The earlier exhibit used the neo4j-python-driver and was wrong — see *Cycle
+detection* below.
 
 ---
 
@@ -290,7 +376,12 @@ ID-based rather than requiring name resolution.
   bound.
 - **Two false positives survive on corpus B**, from Go code shadowing a package
   name with a variable. Eliminating them needs real scope analysis.
-- **Module-level cycle detection depends on Graphify and GitNexus.** CodeGraph's
-  import edges point at module paths rather than resolved files.
+- **Cycle detection runs on source-derived edges, not extractor edges.** The
+  `context` label that makes it correct does not exist in any artifact, and the
+  same AST pass resolves imports to files rather than module strings. `make
+  enrich` is therefore a prerequisite for Q15; without it the cycle queries
+  return nothing, which is a safe failure rather than a wrong answer.
+- **Cycle scoring is Python-only.** Go needs no oracle — the compiler is the
+  oracle, and it rejects package cycles outright.
 - **Extraction is full re-index.** CodeGraph ships debounced incremental sync
   that the harness does not yet use.

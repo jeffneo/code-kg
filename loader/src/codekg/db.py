@@ -188,12 +188,19 @@ MERGE (f)-[u:IMPORTS_EXT]->(e)
 # :ExternalRef outside the repo. These are File->File and they are what makes
 # circular-import detection possible - cycles live at module level far more
 # often than at package or symbol level.
+#
+# `context` is toplevel | typing | deferred and is what makes cycle detection
+# trustworthy - see internal_imports.py. coalesce() rather than plain assignment
+# because extractor-derived rows carry no context and must not erase the value
+# the source pass set.
 MERGE_FILE_IMPORTS = """
 UNWIND $batch AS row
 MATCH (src:File {id: row.src})
 MATCH (dst:File {id: row.dst})
 MERGE (src)-[i:IMPORTS]->(dst)
-  SET i.extractors = coll.distinct(coalesce(i.extractors, []) + row.extractor)
+  SET i.extractors = coll.distinct(coalesce(i.extractors, []) + row.extractor),
+      i.context    = coalesce(row.context, i.context),
+      i.line       = coalesce(row.line, i.line)
 """
 
 DELETE_REPO_SUBGRAPH = """

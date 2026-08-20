@@ -113,17 +113,29 @@ while IFS=$'\t' read -r id url ref subpath; do
 done < <(read_repos)
 
 # Merge resolved SHAs back into the lock file, preserving other corpora.
-printf '%s\n' "${RESOLVED[@]}" | "${PY[@]}" - "$LOCK" "$CORPUS" <<'PY'
+#
+# The resolved rows go through a TEMP FILE, not a pipe. `python -` takes its
+# program from stdin, and the heredoc below is that program - so stdin is
+# already spoken for. Piping the rows in as well silently delivered nothing:
+# `for line in sys.stdin` read zero rows and every corpus locked as `{}`, which
+# meant refetches fell back to the branch ref and the pin was never actually
+# applied. The lock file looked present and correct while guaranteeing nothing.
+RESOLVED_FILE="$(mktemp)"
+trap 'rm -f "$RESOLVED_FILE"' EXIT
+printf '%s\n' "${RESOLVED[@]}" > "$RESOLVED_FILE"
+
+"${PY[@]}" - "$LOCK" "$CORPUS" "$RESOLVED_FILE" <<'PY'
 import sys, yaml, datetime, os
-lock_path, corpus = sys.argv[1], sys.argv[2]
+lock_path, corpus, rows_path = sys.argv[1], sys.argv[2], sys.argv[3]
 doc = {}
 if os.path.exists(lock_path):
     doc = yaml.safe_load(open(lock_path)) or {}
 entry = doc.setdefault(corpus, {})
-for line in sys.stdin:
-    line = line.rstrip("\n")
-    if not line:
-        continue
+with open(rows_path) as fh:
+    rows = [line.rstrip("\n") for line in fh if line.strip()]
+if not rows:
+    sys.exit("refusing to write an empty lock: no repos were resolved")
+for line in rows:
     rid, url, sha, subpath = line.split("\t")
     entry[rid] = {"url": url, "sha": sha, "subpath": subpath or None}
 doc["_locked_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")

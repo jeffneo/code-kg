@@ -12,6 +12,8 @@ cd "$(dirname "$0")"
 declare -a CASES=(
   "a|sym:repo:github.com/neo4j/neo4j-python-driver:src/neo4j/_async/driver.py#AsyncDriver|repo:github.com/neo4j/neo4j-python-driver"
   "b|sym:repo:github.com/grafana/dskit:user/id.go#InjectOrgID|repo:github.com/grafana/dskit"
+  # Paths are relative to the corpus `subpath` (lib/), not the repo root.
+  "c|sym:repo:github.com/sqlalchemy/sqlalchemy:sqlalchemy/orm/session.py#Session|repo:github.com/sqlalchemy/sqlalchemy"
 )
 fail=0
 for case in "${CASES[@]}"; do

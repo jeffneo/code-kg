@@ -31,3 +31,6 @@ graphify-out/
 
 # --- os ----------------------------------------------------------------------
 .DS_Store
+
+# Local graph backups (make dump)
+backups/

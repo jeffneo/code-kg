@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from . import enrich, ids, manifests, oracle, scoring
+from . import cyclescore, enrich, ids, internal_imports, manifests, oracle, scoring
 from . import db
 from .mappers import codegraph, gitnexus, graphify
 
@@ -138,14 +138,40 @@ def cmd_load(args: argparse.Namespace) -> None:
 
             # Code graph.
             doc = mapper.load(artifact)
-            n_files = store.write_batched(db.MERGE_FILE, mapper.files(doc, repo))
+            # `language` is normalised here, not taken from the extractor: the
+            # three disagree (`py` vs `python`) and MERGE_FILE assigns rather
+            # than coalesces, so load order decided the value. See ids.language_of.
+            n_files = store.write_batched(db.MERGE_FILE, (
+                {**row, "language": ids.language_of(row["path"])}
+                for row in mapper.files(doc, repo)
+            ))
 
             symbol_rows = list(mapper.symbols(doc, repo, ecosystem))
             symbol_ids = {row["id"] for row in symbol_rows}
             n_symbols = store.write_batched(db.MERGE_SYMBOL, symbol_rows)
 
             n_calls = store.write_batched(db.MERGE_CALLS, mapper.calls(doc, repo, symbol_ids))
-            n_imports = store.write_batched(db.MERGE_FILE_IMPORTS, mapper.file_imports(doc, repo))
+
+            import_rows = mapper.file_imports(doc, repo)
+            if ecosystem == "go":
+                # Go has no conditional and no function-scoped imports - the
+                # language puts every import in one block at the top of the file
+                # - so every Go edge is toplevel by definition. Python context
+                # is exact and comes from the source pass in `enrich`.
+                #
+                # Restricted to actual .go files on both ends. A blanket label
+                # over the whole corpus also tagged .md, .rb and .sh edges as
+                # toplevel, because Graphify indexes Markdown and treats a link
+                # as an import. The cycle projections filter on language so
+                # nothing leaked, but that is one filter away from the
+                # documentation-cross-links-as-cycles bug all over again.
+                import_rows = (
+                    {**row, "context": internal_imports.TOPLEVEL}
+                    if row["src"].endswith(".go") and row["dst"].endswith(".go")
+                    else row
+                    for row in import_rows
+                )
+            n_imports = store.write_batched(db.MERGE_FILE_IMPORTS, import_rows)
             # repo_root lets the mapper recover import modules from source -
             # graphify records the imported symbol but drops the module it came
             # from. See mappers/importmap.py for why.
@@ -191,7 +217,16 @@ def cmd_enrich(args: argparse.Namespace) -> None:
                 rows = enrich.external_imports(repo, sub, ecosystem)
 
             n = store.write_batched(db.MERGE_FILE_EXTERNAL_REF, rows)
-            print(f"  {spec['id']}: {n} source-derived import refs")
+
+            # Intra-repo imports, classified toplevel/typing/deferred. Required
+            # for honest cycle detection: no extractor records where an import
+            # sits, and a `if TYPE_CHECKING:` cycle never executes.
+            n_int = store.write_batched(
+                db.MERGE_FILE_IMPORTS,
+                internal_imports.classified_imports(repo, sub, ecosystem),
+            )
+            suffix = f", {n_int} classified module imports" if n_int else ""
+            print(f"  {spec['id']}: {n} source-derived import refs{suffix}")
 
 
 def cmd_gds(args: argparse.Namespace) -> None:
@@ -342,6 +377,78 @@ def cmd_score(args: argparse.Namespace) -> None:
         print(f"\nwrote {args.json}")
 
 
+def cmd_score_cycles(args: argparse.Namespace) -> None:
+    """Score the graph's cycle finding against pylint's cyclic-import check.
+
+    See cyclescore.py for why the comparison is set-based and why the scored
+    arm is the facade-inclusive one.
+    """
+    corpus_root = Path(os.environ.get("CORPUS_DIR", "/corpus")) / args.corpus
+    ecosystem = _ecosystem(args.corpus)
+    if ecosystem != "python":
+        sys.exit(
+            "cycle scoring is Python-only. Go forbids circular package imports at "
+            "compile time, so zero is the only correct answer for a Go corpus and "
+            "there is nothing to score against."
+        )
+
+    with db.store() as store:
+        for spec in _repos(args.corpus):
+            repo = ids.repo_id(spec["url"])
+            root = corpus_root / spec["id"]
+            sub = root / spec["subpath"] if spec.get("subpath") else root
+            if not sub.is_dir():
+                print(f"  {spec['id']}: SKIP (not checked out)")
+                continue
+
+            index = internal_imports.module_index(sub)
+            packages = cyclescore.top_level_packages(index)
+            prefix = (spec["subpath"].rstrip("/") + "/") if spec.get("subpath") else ""
+
+            print(f"\n=== {spec['id']} ===")
+            print(f"  running pylint --enable=cyclic-import over {', '.join(packages)} "
+                  f"({len(index)} modules)...")
+            truth, diag = cyclescore.pylint_cycles(sub, packages, timeout=args.timeout)
+            if diag.get("error"):
+                print(f"  ORACLE UNAVAILABLE: {diag['error']}")
+                continue
+            print(f"  pylint: {diag['chains_reported']} overlapping chains naming "
+                  f"{diag['modules_in_cycles']} distinct modules")
+
+            # A 2x2: facades on/off x TYPE_CHECKING on/off. One variable at a
+            # time, so the deltas are readable. pylint sits in the top row - it
+            # makes no facade distinction - which is why that is the scored arm.
+            arms = [
+                ("all contexts, with facades (scored)", "sccAllCtxId"),
+                ("toplevel + typing, with facades", "sccAllDesignId"),
+                ("toplevel only, with facades", "sccId"),
+                ("toplevel only, facade-free", "sccCoreId"),
+                ("toplevel + typing, facade-free", "sccDesignId"),
+            ]
+            scores = []
+            for label, prop in arms:
+                members = cyclescore.graph_cycle_members(store, repo, prop)
+                scores.append(cyclescore.CycleScore(
+                    label, cyclescore.to_modules(members, index, prefix), truth
+                ))
+
+            print(cyclescore.format_table(scores))
+            scored = scores[0]
+            missed = sorted(scored.truth - scored.predicted)[:6]
+            extra = sorted(scored.predicted - scored.truth)[:6]
+            if missed:
+                print(f"  pylint-only (we miss): {', '.join(missed)}")
+            if extra:
+                print(f"  graph-only (we add):   {', '.join(extra)}")
+
+    print("\nThe SCORED arm is `all contexts, with facades`, because that is what")
+    print("pylint actually models: it makes no facade distinction and it counts")
+    print("function-scoped imports, so it reports cycles the standard cycle-breaking")
+    print("idiom has already broken. Read the arms downward - each row removes one")
+    print("class of edge that does not constitute a runtime cycle. The last row is")
+    print("the finding; the gap between first and last is the noise we remove.")
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     with db.store() as store:
         for label in ("Repo", "File", "Symbol", "Package", "ExternalRef"):
@@ -394,6 +501,12 @@ def main() -> None:
     p.add_argument("--merge", metavar="PATH",
                    help="also score a `graphify merge-graphs` output as a baseline arm")
     p.set_defaults(fn=cmd_score)
+
+    p = sub.add_parser("score-cycles", help="score cycle finding against pylint")
+    p.add_argument("corpus")
+    p.add_argument("--timeout", type=int, default=1800,
+                   help="seconds to allow pylint per repo (default 1800)")
+    p.set_defaults(fn=cmd_score_cycles)
 
     sub.add_parser("stats", help="node and relationship counts").set_defaults(fn=cmd_stats)
 

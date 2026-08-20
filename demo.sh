@@ -109,14 +109,27 @@ beat6() {
 }
 
 beat7() {
-  hr; bold "7. Circular dependencies"
+  hr; bold "7. Circular dependencies  (corpus C - SQLAlchemy)"
   q q15
-  say "An 11-hop import chain in the driver. Naive search cannot even reach length 6."
-  dim "   *2..5 returns in 18ms; *2..6 does not finish in 90 seconds. SCC first, in O(V+E),"
-  dim "   then enumerate only inside components. That is the transferable technique."
-  say "Do NOT sell the 102 as a defect - 23 of those are __init__.py."
-  dim "   Strip the package facade and the real cycle is 3 modules. Say so first;"
-  dim "   being the one who explains why the big number is benign is worth more."
+  say "Four cyclic components, 22 modules. The two biggest are 7 modules each in the ORM core."
+  dim "   Open with THEIR evidence: sqlalchemy ships util/preloaded.py, a module whose stated"
+  dim "   job is resolving circular module imports at runtime. Nobody writes that for fun."
+  say "The substance is classification. One IMPORTS edge means three different things:"
+  dim "   toplevel runs on import; 'if TYPE_CHECKING:' NEVER runs; in-function runs on call"
+  dim "   and is usually a deliberate cycle-break. Only the first is a cycle you can hit."
+  say "Read the ladder down: 184 modules counting everything -> 159 toplevel -> 22 facade-free."
+  dim "   The top number is not wrong, it is not actionable. 22 is what you hand a team."
+  say "Checkable on the spot: 'make score-cycles CORPUS=c' runs pylint as an oracle."
+  dim "   Recall 1.000 - all 77 modules pylint names. We name 107 more; spot-verified in"
+  dim "   source. And pylint's chain COUNT is unstable: 78, 74, 72 on identical runs."
+  dim "   Chains cannot answer 'how many distinct problems'. Components can."
+  say "Go returns zero across 83,529 toplevel edges - the answer the compiler guarantees."
+  dim "   That is the control. Perf note: *2..5 is 18ms, *2..6 does not finish in 90s;"
+  dim "   SCC is O(V+E) first, then enumerate only inside tiny components."
+  say "If the driver comes up: zero runtime cycles. An earlier build of this demo claimed"
+  dim "   102 entangled modules and an 11-hop cycle for it. That was WRONG - the component"
+  dim "   was held together by two TYPE_CHECKING edges that never execute. Own it; being"
+  dim "   the one who found and fixed that is worth more than the number ever was."
   wait_key
 }
 

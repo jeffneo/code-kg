@@ -108,7 +108,30 @@ does.
 | `DECLARES` | `(:File)→(:Symbol)` | 154,183 | the file defines this symbol |
 | `IN_REPO` | `(:Symbol)→(:Repo)` | 154,183 | denormalised shortcut, so repo-scoped queries skip a hop |
 | `CALLS` | `(:Symbol)→(:Symbol)` | 276,364 | intra-repo call, inheritance or instantiation |
-| `IMPORTS` | `(:File)→(:File)` | 90,104 | **intra-repo module dependency** — what circular-import detection runs on |
+| `IMPORTS` | `(:File)→(:File)` | 90,104 | **intra-repo module dependency** — what circular-import detection runs on; carries `context` and `line` |
+
+> **`IMPORTS.context` is the most consequential property in the schema for
+> anything cycle-related.** It is `toplevel`, `typing`, or `deferred`, and no
+> extractor provides it — it comes from a source-derived AST pass
+> (`internal_imports.py`), which is also what resolves the import to a *file*
+> rather than a module string.
+>
+> | `context` | executes | a cycle here means |
+> |---|---|---|
+> | `toplevel` | on import | a real import-time cycle |
+> | `typing` | never (`if TYPE_CHECKING:`) | design coupling, already broken at runtime |
+> | `deferred` | on call (inside a function) | someone deliberately broke a cycle |
+>
+> Without this field the three are indistinguishable and cycle findings are
+> simply wrong. Measured: the neo4j-python-driver was reported as one
+> 102-module component with an 11-hop cycle; classified top-level and
+> facade-free it has **zero** cycles, because the part being quoted was held
+> together by two `TYPE_CHECKING` edges that never run.
+>
+> Python edges get their context from `make enrich`. **Cycle queries return
+> nothing if `enrich` has not run** — a safe failure rather than a wrong
+> answer. Go edges are labelled `toplevel` at load time, which is exact: the
+> language has no conditional and no function-scoped imports.
 
 `CALLS` carries `extractors`, `confidence` and `evidence` (`file:line`).
 Confidence is normalised across the tools' different vocabularies: a resolved
@@ -178,13 +201,27 @@ Confidence is graded by *how* the match was made, not guessed:
 | `pagerank` | PageRank | influence, distinct from brokerage |
 | `isArticulationPoint` | Articulation points | **INTEGER 0/1, not boolean** — predicates need `> 0` |
 
-A second, separate projection `modules` covers `:File` and `IMPORTS` only, and
-is **directed** — orientation is what makes a cycle a cycle, so the undirected
-projection above is useless for it:
+Three further projections cover `:File` and `IMPORTS` only, and are all
+**directed** — orientation is what makes a cycle a cycle, so the undirected
+projection above is useless for them. All three filter to `context = 'toplevel'`
+(plus `typing` for the last), and to `language IN ['py','go']` so that Markdown
+cross-links cannot masquerade as imports:
 
-| property | algorithm | reading |
-|---|---|---|
-| `sccId` | Strongly connected components | every file in a component of size > 1 is in at least one cycle; Q15 uses this as its pre-filter |
+| property | projection | includes | reading |
+|---|---|---|---|
+| `sccId` | `modules` | top-level, **with** `__init__.py` | like-for-like against pylint, which makes no facade distinction |
+| `sccCoreId` | `modules_core` | top-level, facade-free | **the number to act on** |
+| `sccDesignId` | `modules_design` | top-level + `typing`, facade-free | design coupling; real, but never a runtime risk |
+
+The gap between `sccId` and `sccCoreId` is package-facade inflation: a package
+`__init__.py` that re-exports from submodules which import back from the package
+root is idiomatic and not a defect, but it produces enormous components. The gap
+between `sccCoreId` and `sccDesignId` is `TYPE_CHECKING` coupling.
+
+Q15 pre-filters on `sccCoreId` and reports the other two as context. Go is
+absent from the results by language design, not omission — the Go compiler
+rejects circular package imports, so zero is the only correct answer, and
+getting zero is a check on the method.
 
 ---
 

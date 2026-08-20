@@ -91,33 +91,83 @@ works only because `langchain-neo4j` pulls the driver in transitively.
 Often the strongest beat in the room, because it's a live bug rather than a
 hypothetical.
 
-### 7 — Circular dependencies  *(2 min)*
-Seven cyclic components in code. The driver's is 102 modules, 591 cycles, the
-longest **11 hops**.
+### 7 — Circular dependencies  *(3 min)*   `CORPUS=c`
+Run on corpus C — SQLAlchemy. **Four** cyclic components, **22 modules**, the
+largest two being **7 modules each in the ORM core**. Longest facade-free cycle
+is 3 hops:
 
-**Lead with the technique, not the number.** The obvious query —
-`MATCH (a:File)-[:IMPORTS*2..n]->(a)` — returns in 18 ms at n=5 and **does not
-finish in 90 seconds at n=6**. Strongly connected components answer "which nodes
-can be in a cycle at all" in O(V+E), completely, so enumeration runs only inside
-tiny components. Cycles to length 11 in under a second.
+```
+orm/strategies.py → orm/context.py → orm/loading.py → orm/strategies.py
+```
 
-> "The naive version can't reach the length you'd find by hand."
+**Open with the maintainers' own evidence, not with a number.** SQLAlchemy ships
+[`lib/sqlalchemy/util/preloaded.py`](https://github.com/sqlalchemy/sqlalchemy/blob/main/lib/sqlalchemy/util/preloaded.py),
+a module whose stated job is resolving circular module imports at runtime. Nobody
+writes that unless the cycles are real.
 
-**Then defuse the 102 yourself, before anyone asks.** 23 of those modules are
-`__init__.py`. Strip the package facade and the real cycle is **3 modules** —
-`_warnings.py` ↔ `warnings.py` ↔ `_work/summary.py`. A package `__init__` that
-re-exports from submodules which import back is idiomatic Python, not a defect.
+> "This isn't us inferring something. They built a subsystem to manage it. We're
+> showing you where it's needed and how big it is."
 
-> "The big number is a facade pattern, and it's deliberate. The number to act on
-> is three."
+**The substance is classification, not depth.** One `IMPORTS` edge can mean three
+different things, and only one of them is a cycle you can hit:
 
-Being the person who explains why the headline number is benign buys more
-credibility than the headline number does. If a driver maintainer is in the room
-and you sold 102 as a vulnerability, you have lost them.
+| context | executes | cycle here means |
+|---|---|---|
+| top-level | on import | real import-time cycle |
+| `if TYPE_CHECKING:` | **never** | design coupling, already broken |
+| inside a function | on call | someone deliberately broke a cycle |
 
-Also worth saying: Go has **zero** code cycles here. And `mimir`/`loki` initially
-appeared to have some — they were Markdown files cross-linking, because Graphify
-indexes `.md` and treats a link as an import. That is now filtered out.
+Read the ladder downward — each step removes edges that are not runtime cycles:
+
+| what you count | modules implicated |
+|---|---|
+| every context, facades included *(what a context-blind tool sees)* | 184 |
+| top-level only | 159 |
+| **top-level, facades removed** | **22** |
+
+> "The top number isn't wrong, it's just not actionable. Twenty-two is the number
+> you can hand to a team."
+
+**Then the head-to-head, because it is checkable on the spot.** `make
+score-cycles CORPUS=c` runs pylint's `cyclic-import` as an independent oracle:
+
+- **Recall 1.000** — every one of the 77 modules pylint names, no misses.
+- We name **107 more**, and they are real. Verified by hand:
+  `dialects/mssql/pymssql.py → base.py → mssql/__init__.py → pymssql.py`, all
+  three edges top-level, all three visible in source. pylint doesn't model
+  `from . import X` as executing the package's `__init__`.
+- pylint reports overlapping **chains**, not components — and the chain count is
+  not stable, giving 78, 74 and 72 across identical runs while the module set
+  stayed at 77. "How many distinct problems do I have" is not answerable from
+  that output.
+
+**The performance technique, briefly.** `MATCH (a:File)-[:IMPORTS*2..n]->(a)`
+returns in 18 ms at n=5 and **does not finish in 90 seconds at n=6**. SCC answers
+"which nodes can be in a cycle at all" in O(V+E) and completely, so enumeration
+only ever runs inside tiny components.
+
+**If someone asks about the Neo4j driver** (it is in corpus A, so it may come
+up): zero runtime cycles. Say it plainly — and if you want the credibility, say
+that an earlier version of this demo reported 102 entangled modules and an 11-hop
+cycle for the driver, and that it was **wrong**: the component was held together
+by two `TYPE_CHECKING` edges that never execute. Being the person who found and
+fixed that is worth more than the number ever was.
+
+**Go's zero is a selling point, so say it out loud.** The Go compiler rejects
+circular package imports, so the right answer is known before you run anything —
+and across **83,529 top-level Go import edges in 3,559 files, we return zero**.
+
+> "We ran it against a language that makes this impossible, over eighty thousand
+> edges, and got the answer the compiler guarantees. That's the control."
+
+Footnote if pressed: those Go edges come from GitNexus. Graphify emits almost
+none (mimir 6, loki 1, tempo 0) because it resolves Go imports to external
+package refs — so the control only exists because a second extractor was in the
+harness.
+
+Also worth a sentence: `mimir`/`loki` once appeared to have cycles that were
+Markdown files cross-linking, because Graphify indexes `.md` and treats a link as
+an import. Filtered out now.
 
 ### 8 — How much should you believe?  *(2 min)*
 Three extractors vote on every edge. Only **~15% of call edges are corroborated

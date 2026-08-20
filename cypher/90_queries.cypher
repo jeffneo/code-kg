@@ -386,47 +386,77 @@ LIMIT 20;
 // SCC answers "which nodes can be in a cycle at all" in O(V+E), completely,
 // and enumeration then runs only inside those components.
 //
-// HOW TO READ THE RESULT - THIS MATTERS MORE THAN THE QUERY
-// ---------------------------------------------------------
-// `entangled` counts the whole strongly connected component. `core` excludes
-// __init__.py. The gap between them is almost always the Python package-facade
-// pattern: a package __init__ re-exports from submodules that import back from
-// the package root. That is idiomatic, deliberate, and NOT a defect.
+// WHAT COUNTS AS A CYCLE - READ THIS BEFORE PRESENTING THE RESULT
+// ---------------------------------------------------------------
+// Two filters are applied upstream in the projection, and both are load-bearing.
 //
-// Measured here: the driver's component is 102 modules, of which 23 are
-// __init__.py - and `core` is 3. Quoting 102 as a finding would badly overstate
-// it, and anyone who maintains that package would say so immediately.
+// 1. ONLY `context = 'toplevel'` EDGES. An import inside `if TYPE_CHECKING:`
+//    never executes; an import inside a function body runs on call, not on
+//    import, and is usually a deliberate cycle-break. Counting them as cycles
+//    is simply wrong. This filter is why the driver, once classified, has ZERO
+//    runtime cycles - the component we used to quote was held together by two
+//    TYPE_CHECKING edges.
 //
-// **`core` is the number to act on. `entangled` is context.**
+// 2. FACADES SEPARATED. `sccCoreId` excludes __init__.py. A package facade that
+//    re-exports from submodules which import back from the package root is
+//    idiomatic and not a defect, but it creates enormous components.
 //
-// Markdown is excluded upstream in the projection. Graphify indexes .md and
-// treats a link as an import, which made documentation cross-links look like
-// dependency cycles - mimir and loki had no code cycles at all.
+// So: `core_modules` is the finding. `entangled` is context, and on its own it
+// overstates - which is exactly the mistake this query used to make.
 //
-// Also: a Python cycle guarded by `if TYPE_CHECKING:` is a design-time cycle
-// already broken at runtime. The graph does not record which is which.
+// Go is absent from the results by language design, not by omission: the Go
+// compiler rejects circular package imports, so zero is the only correct answer
+// and finding zero is a check on the method.
+//
+// Independently verified against pylint's cyclic-import via `make score-cycles`.
+// pylint reports overlapping chains with no component structure and no facade
+// distinction - 8+ findings on the driver for what is one component.
 // ----------------------------------------------------------------------------
-MATCH (f:File) WHERE f.sccId IS NOT NULL
-WITH f.sccId AS scc, collect(f) AS members, count(*) AS entangled
-WHERE entangled > 1
+MATCH (f:File) WHERE f.sccCoreId IS NOT NULL
+WITH f.sccCoreId AS scc, collect(f) AS members, count(*) AS core_modules
+WHERE core_modules > 1
 CALL apoc.nodes.cycles(members, {relTypes: ['IMPORTS'], maxDepth: 10}) YIELD path
-WITH scc, members, entangled, path ORDER BY length(path) DESC
-WITH scc, members, entangled,
+// apoc bounds traversal to `members`, which keeps this fast, but it cannot
+// filter on a relationship property - so it will happily route a cycle through
+// a TYPE_CHECKING edge. Discarding those here is what keeps the enumeration
+// consistent with the projection that selected the component in the first
+// place. Without this line the classification is undone at the last step.
+WHERE all(r IN relationships(path) WHERE r.context = 'toplevel')
+// apoc also expands THROUGH nodes outside the list it was given, so a cycle
+// could be routed via a package __init__ - and reporting that under a
+// "facade-free" heading is exactly the sleight of hand this query exists to
+// avoid. Confining the path to the component keeps the example consistent with
+// the number next to it.
+  AND all(n IN nodes(path) WHERE n.sccCoreId = scc)
+// ORDER BY before aggregating so head(collect(...)) is the LONGEST cycle, not
+// an arbitrary one.
+WITH scc, members, core_modules, path ORDER BY length(path) DESC
+WITH scc, members, core_modules,
      count(path)         AS cycles,
      max(length(path))   AS longest,
      head(collect(path)) AS worst
-// core = the same component with package facades removed
+WHERE cycles > 0
 UNWIND members AS m
-WITH scc, entangled, cycles, longest, worst,
-     count(DISTINCT CASE WHEN NOT m.path ENDS WITH '__init__.py'
-                          AND m.sccCoreId IS NOT NULL THEN m.sccCoreId END) AS core_components,
-     collect(m)[0].repo AS repo
-RETURN split(repo, '/')[-1]             AS repo,
-       entangled                        AS entangled,
+WITH scc, core_modules, cycles, longest, worst,
+     collect(m)[0].repo              AS repo,
+     max(coalesce(m.sccId, 0))       AS runtime_component,
+     max(coalesce(m.sccDesignId, 0)) AS design_component
+// Both imported variables stay listed in every WITH inside the subquery: a WITH
+// drops anything it does not name, imported or not.
+CALL (runtime_component, design_component) {
+  MATCH (a:File) WHERE a.sccId = runtime_component
+  WITH count(a) AS entangled_with_facades, design_component
+  MATCH (b:File) WHERE b.sccDesignId = design_component
+  RETURN entangled_with_facades, count(b) AS design_time_modules
+}
+RETURN split(repo, '/')[-1]         AS repo,
+       core_modules,
        cycles,
        longest,
-       [n IN nodes(worst) | n.path]     AS longest_cycle
-ORDER BY entangled DESC, cycles DESC;
+       entangled_with_facades,
+       design_time_modules,
+       [n IN nodes(worst) | n.path]  AS longest_cycle
+ORDER BY core_modules DESC, cycles DESC;
 
 
 // ----------------------------------------------------------------------------

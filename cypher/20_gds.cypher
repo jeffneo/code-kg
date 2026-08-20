@@ -28,18 +28,21 @@
 // UNDIRECTED throughout: Leiden and articulationPoints require it, and for
 // "what clusters with what" the direction of a call is not the question.
 // ----------------------------------------------------------------------------
+// A Cypher projection, not a native one. The native form names relationship
+// types up front and fails outright if any is absent - which it is whenever the
+// cross-repo pass has not run, or when only a single-repo corpus is loaded
+// (corpus C). Projecting from a MATCH takes whatever exists.
 CALL gds.graph.drop('codekg', false) YIELD graphName;
 
-CALL gds.graph.project(
-  'codekg',
-  ['Symbol', 'File'],
-  {
-    CALLS:              {orientation: 'UNDIRECTED'},
-    CALLS_CROSS_REPO:   {orientation: 'UNDIRECTED'},
-    IMPORTS_CROSS_REPO: {orientation: 'UNDIRECTED'},
-    DECLARES:           {orientation: 'UNDIRECTED'}
-  }
-) YIELD graphName, nodeCount, relationshipCount;
+MATCH (src)-[r]->(dst)
+WHERE (src:Symbol OR src:File) AND (dst:Symbol OR dst:File)
+  AND type(r) IN ['CALLS', 'CALLS_CROSS_REPO', 'IMPORTS_CROSS_REPO', 'DECLARES']
+WITH gds.graph.project(
+  'codekg', src, dst,
+  {},
+  {undirectedRelationshipTypes: ['*']}   // Leiden and articulationPoints require it
+) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
 
 
 // ----------------------------------------------------------------------------
@@ -100,25 +103,39 @@ CALL gds.articulationPoints.write('codekg', {
 // completely - which nodes can be in a cycle at all - so enumeration afterwards
 // only ever runs on a tiny subgraph.
 //
-// TWO projections, because the raw answer is misleading:
+// THE EDGE FILTER IS THE WHOLE FIX. `context = 'toplevel'` restricts the
+// projection to imports that actually EXECUTE on import. Without it the result
+// is not conservative, it is wrong: the driver was reported as one 102-module
+// component with an 11-hop cycle, and two of the three edges in the part we
+// were quoting are `if TYPE_CHECKING:` blocks that never run. Classified
+// top-level and facade-free, the driver has ZERO cycles.
+// See loader/src/codekg/internal_imports.py.
 //
-//   modules       code files only. Markdown was inflating the result badly -
-//                 graphify indexes .md and treats a link as an import, so
-//                 mimir and loki appeared to have cycles that were entirely
-//                 documentation cross-links.
+// Markdown never reaches these projections either. Graphify indexes .md and
+// treats a link as an import, which made documentation cross-links look like
+// dependency cycles in mimir and loki.
 //
-//   modules_core  code files, EXCLUDING __init__.py. A Python package facade
-//                 that re-exports from submodules which import back from the
-//                 package root is idiomatic, deliberate, and not a defect - but
-//                 it creates enormous strongly connected components. The
-//                 driver's 102-module component falls to 3 real modules once
-//                 the facades are removed. Reporting only the first number
-//                 would badly overstate the finding.
+// THREE projections, because one number cannot carry the answer:
+//
+//   modules        toplevel only. Executes on import. Includes __init__.py, so
+//                  it is the like-for-like comparison against pylint, which
+//                  makes no facade distinction. -> sccId
+//
+//   modules_core   toplevel, EXCLUDING __init__.py. A package facade that
+//                  re-exports from submodules which import back from the
+//                  package root is idiomatic and not a defect, but it creates
+//                  enormous components. THIS IS THE NUMBER TO ACT ON. -> sccCoreId
+//
+//   modules_design toplevel + TYPE_CHECKING, facade-free. Design-time coupling,
+//                  already broken at runtime. Real architectural information,
+//                  but never a runtime risk - do not present it as one.
+//                  -> sccDesignId
 // ----------------------------------------------------------------------------
 CALL gds.graph.drop('modules', false) YIELD graphName;
 
-MATCH (src:File)-[:IMPORTS]->(dst:File)
+MATCH (src:File)-[r:IMPORTS]->(dst:File)
 WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND r.context = 'toplevel'
 WITH gds.graph.project('modules', src, dst) AS g
 RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
 
@@ -133,8 +150,9 @@ YIELD componentCount, computeMillis;
 
 CALL gds.graph.drop('modules_core', false) YIELD graphName;
 
-MATCH (src:File)-[:IMPORTS]->(dst:File)
+MATCH (src:File)-[r:IMPORTS]->(dst:File)
 WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND r.context = 'toplevel'
   AND NOT src.path ENDS WITH '__init__.py'
   AND NOT dst.path ENDS WITH '__init__.py'
 WITH gds.graph.project('modules_core', src, dst) AS g
@@ -143,4 +161,55 @@ RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount A
 MATCH (f:File) WHERE f.sccCoreId IS NOT NULL REMOVE f.sccCoreId;
 
 CALL gds.scc.write('modules_core', {writeProperty: 'sccCoreId'})
+YIELD componentCount, computeMillis;
+
+// EVERY context, facades included - the arm that reproduces what a
+// context-blind tool sees. pylint's cyclic-import counts function-scoped
+// imports, so it reports cycles that the standard cycle-breaking idiom has
+// already broken. Having this arm turns "our precision looks bad" into a
+// measured explanation of exactly which edges account for the difference.
+CALL gds.graph.drop('modules_all_ctx', false) YIELD graphName;
+
+MATCH (src:File)-[r:IMPORTS]->(dst:File)
+WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND r.context IS NOT NULL
+WITH gds.graph.project('modules_all_ctx', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+MATCH (f:File) WHERE f.sccAllCtxId IS NOT NULL REMOVE f.sccAllCtxId;
+
+CALL gds.scc.write('modules_all_ctx', {writeProperty: 'sccAllCtxId'})
+YIELD componentCount, computeMillis;
+
+// Facade-INCLUSIVE design-time, so the scoring arms form a clean 2x2 (facades
+// on/off x typing on/off) and vary one thing at a time. Without this, comparing
+// "runtime with facades" against "runtime + design-time facade-free" moves two
+// variables at once and the result is uninterpretable - which is exactly what
+// the first version of score-cycles did.
+CALL gds.graph.drop('modules_all_design', false) YIELD graphName;
+
+MATCH (src:File)-[r:IMPORTS]->(dst:File)
+WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND r.context IN ['toplevel', 'typing']
+WITH gds.graph.project('modules_all_design', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+MATCH (f:File) WHERE f.sccAllDesignId IS NOT NULL REMOVE f.sccAllDesignId;
+
+CALL gds.scc.write('modules_all_design', {writeProperty: 'sccAllDesignId'})
+YIELD componentCount, computeMillis;
+
+CALL gds.graph.drop('modules_design', false) YIELD graphName;
+
+MATCH (src:File)-[r:IMPORTS]->(dst:File)
+WHERE src.language IN ['py', 'go'] AND dst.language IN ['py', 'go']
+  AND r.context IN ['toplevel', 'typing']
+  AND NOT src.path ENDS WITH '__init__.py'
+  AND NOT dst.path ENDS WITH '__init__.py'
+WITH gds.graph.project('modules_design', src, dst) AS g
+RETURN g.graphName AS graphName, g.nodeCount AS nodeCount, g.relationshipCount AS relationshipCount;
+
+MATCH (f:File) WHERE f.sccDesignId IS NOT NULL REMOVE f.sccDesignId;
+
+CALL gds.scc.write('modules_design', {writeProperty: 'sccDesignId'})
 YIELD componentCount, computeMillis;

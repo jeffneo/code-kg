@@ -1,3 +1,44 @@
-_locked_at: '2026-08-15T13:06:08+00:00'
-a: {}
-b: {}
+_locked_at: '2026-08-20T03:24:07+00:00'
+a:
+  graph-data-science-client:
+    sha: ecac13c25f14d3cfd76ed950996a999abb608322
+    subpath: null
+    url: https://github.com/neo4j/graph-data-science-client
+  langchain-neo4j:
+    sha: cf6ea8076ac1e423325293b93c7a0e20b0025885
+    subpath: libs/neo4j
+    url: https://github.com/langchain-ai/langchain-neo4j
+  llm-graph-builder:
+    sha: 5ff7af3e9bb9226e1bbecd02f70f8d98697727a7
+    subpath: backend
+    url: https://github.com/neo4j-labs/llm-graph-builder
+  neo4j-graphrag-python:
+    sha: d1e36e7c3ceb557bb178e83c99656af601367970
+    subpath: null
+    url: https://github.com/neo4j/neo4j-graphrag-python
+  neo4j-python-driver:
+    sha: 2fb4e1a63ed216fcbf1f4574740d2faf28883d37
+    subpath: null
+    url: https://github.com/neo4j/neo4j-python-driver
+b:
+  dskit:
+    sha: 4a836a70f745b606127d142ef1b45a7de5075c25
+    subpath: null
+    url: https://github.com/grafana/dskit
+  loki:
+    sha: 24cfedd4f67b53367b63e273d64dbfc5ad307535
+    subpath: null
+    url: https://github.com/grafana/loki
+  mimir:
+    sha: f828e3db1aedb8bd5d170705ad4f58f6138f437a
+    subpath: null
+    url: https://github.com/grafana/mimir
+  tempo:
+    sha: 4d876b4d6ded7f56bc84bd6e6c6e78a95e99b5cb
+    subpath: null
+    url: https://github.com/grafana/tempo
+c:
+  sqlalchemy:
+    sha: 16d00eca61cfc690b2709642f4a2656fb6424875
+    subpath: lib
+    url: https://github.com/sqlalchemy/sqlalchemy

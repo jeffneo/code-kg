@@ -85,6 +85,27 @@ def module_to_package(ecosystem: str, module: str) -> str | None:
     return module
 
 
+def language_of(path: str) -> str:
+    """File extension, lowercased. OUR rule, deliberately not the extractor's.
+
+    The three extractors disagree: graphify and gitnexus derive it from the
+    extension (`py`), CodeGraph reports its own detected language (`python`).
+    Because MERGE_FILE assigns rather than coalesces, whichever extractor loaded
+    last silently won - so `language` meant different things depending on load
+    order, and every query filtering on it was unreliable.
+
+    That bit: the cycle projections filter `language IN ['py','go']` to keep
+    Markdown out, and after CodeGraph relabelled every Python file as `python`
+    the projections matched nothing at all and the SCC step failed outright.
+    A loud failure, but it could just as easily have silently dropped a repo.
+
+    Same reasoning as `exported` - normalise centrally so a property means one
+    thing regardless of which tool produced the row.
+    """
+    _, _, ext = _norm_path(path).rpartition(".")
+    return ext.lower() if ext else "unknown"
+
+
 def _norm_path(path: str) -> str:
     """Repo-relative, forward-slashed, no leading ./ - extractors vary."""
     path = path.replace("\\", "/").lstrip("/")
