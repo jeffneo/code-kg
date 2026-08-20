@@ -352,9 +352,19 @@ Worth knowing before someone asks:
 - **No commits, authors, or PRs.** None of the three extractors model git
   history, and the corpus is shallow-cloned. Co-change coupling and ownership
   need a separate ingest.
-- **No CVEs, incidents or deployments.** These are the natural next joins — and
-  they attach to nodes that already exist (`:Package` for CVEs, `:Repo` or
-  `:Symbol` for incidents).
+- **No incidents or deployments.** Still the natural next joins, and they attach
+  to nodes that already exist (`:Repo` or `:Symbol`) by id rather than by name
+  resolution. The `:Vulnerability` layer above is the worked example of how
+  cheap that shape is.
+- **No function-level vulnerability reachability.** `make vulns` resolves to the
+  *package* — it can say "this file imports the affected package", not "this
+  call reaches the affected function". Most advisory feeds are package-level, so
+  this is a limit of the data as much as of the graph.
+- **No dataflow, so no vulnerability *discovery*.** The graph has call edges, not
+  data flow. Nothing here finds injection, XSS, path traversal or unsafe
+  deserialization — those need taint tracking from source to sink. The
+  vulnerability layer joins *known* advisories to code; it does not find new
+  ones, and recall is far too low for a blocking check.
 - **No Community / Process / Route nodes from GitNexus.** It produces them, but
   they have no counterpart in the other two extractors and would appear as
   "gitnexus only" in the agreement matrix for purely structural reasons.

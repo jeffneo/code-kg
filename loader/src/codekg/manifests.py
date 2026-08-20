@@ -77,8 +77,46 @@ def parse_python(repo_root: Path) -> list[Dependency]:
     return deps
 
 
+def _go_replacements(text: str) -> dict[str, tuple[str, str | None]]:
+    """module -> (replacement module, replacement version) from `replace` lines.
+
+    Handles both forms:
+        replace old => new v1.2.3
+        replace ( old => new v1.2.3 )
+
+    This matters more than it looks. Mimir requires
+    `github.com/prometheus/prometheus v1.99.0` - a placeholder version that does
+    not exist upstream - and then replaces it with `grafana/mimir-prometheus`.
+    Read the require line alone and you conclude Mimir ships upstream Prometheus
+    1.99.0, which produced a confident, wrong CVE finding against it. The build
+    never uses that module at all.
+    """
+    out: dict[str, tuple[str, str | None]] = {}
+    in_block = False
+    for raw in text.splitlines():
+        line = raw.split("//", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("replace ("):
+            in_block = True
+            continue
+        if in_block and line == ")":
+            in_block = False
+            continue
+        body = line[len("replace "):] if line.startswith("replace ") else (line if in_block else None)
+        if not body or "=>" not in body:
+            continue
+        left, right = body.split("=>", 1)
+        old = left.split()[0] if left.split() else None
+        parts = right.split()
+        if not old or not parts:
+            continue
+        out[old] = (parts[0], parts[1] if len(parts) > 1 else None)
+    return out
+
+
 def parse_go(repo_root: Path) -> list[Dependency]:
-    """Parse go.mod require blocks.
+    """Parse go.mod require blocks, applying `replace` directives.
 
     Only direct requires count as ground truth. Lines marked `// indirect` are
     transitive and the extractors have no reason to surface them, so counting
@@ -91,8 +129,10 @@ def parse_go(repo_root: Path) -> list[Dependency]:
         if _is_excluded(gomod, repo_root):
             continue
         rel = str(gomod.relative_to(repo_root))
+        text = gomod.read_text(errors="replace")
+        replacements = _go_replacements(text)
         in_block = False
-        for raw in gomod.read_text(errors="replace").splitlines():
+        for raw in text.splitlines():
             line = raw.strip()
             if line.startswith("require ("):
                 in_block = True
@@ -116,6 +156,16 @@ def parse_go(repo_root: Path) -> list[Dependency]:
             if len(parts) < 2:
                 continue
             module, version = parts[0], parts[1]
+            # A replaced module is not what the build resolves. Follow it, so the
+            # dependency recorded is the one actually compiled - and so a CVE
+            # against the replaced-away module is not attributed here.
+            if module in replacements:
+                new_module, new_version = replacements[module]
+                # A filesystem replacement (`=> ./pkg/push`) has no version and
+                # is a local directory, not a published dependency.
+                if new_module.startswith((".", "/")):
+                    continue
+                module, version = new_module, new_version or version
             if module in seen:
                 continue
             seen.add(module)

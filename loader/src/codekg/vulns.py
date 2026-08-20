@@ -105,18 +105,41 @@ def resolved_version(spec: str | None, ecosystem: str) -> str | None:
     return None
 
 
-def _in_range(version, introduced: str | None, fixed: str | None) -> bool | None:
-    """Is `version` within [introduced, fixed)? None when undecidable."""
+def _in_range(version, introduced: str | None, fixed: str | None,
+              last_affected: str | None = None) -> bool | None:
+    """Is `version` inside this affected interval? None when undecidable.
+
+    OSV has THREE bound event types and they are not interchangeable:
+
+      fixed          exclusive upper bound - affected is [introduced, fixed)
+      last_affected  INCLUSIVE upper bound - affected is [introduced, last]
+      limit          exclusive, same shape as fixed
+
+    Reading only `introduced`/`fixed` treats a `last_affected` range as
+    unbounded, which reports every version as affected. That is exactly what
+    happened: torch 2.10.0 was flagged by 9 advisories whose ranges are
+    `{introduced: 0, last_affected: 2.6.0-cu124}`, while OSV's own resolver
+    correctly says 2. An upper bound that is silently dropped fails in the
+    direction that manufactures findings, which is the worst direction for
+    anything security-adjacent.
+    """
     lo = _parse(introduced) if introduced and introduced != "0" else None
-    hi = _parse(fixed) if fixed else None
     if introduced and introduced != "0" and lo is None:
-        return None
-    if fixed and hi is None:
         return None
     if lo is not None and version < lo:
         return False
-    if hi is not None and version >= hi:
-        return False
+
+    if fixed:
+        hi = _parse(fixed)
+        if hi is None:
+            return None
+        return version < hi
+    if last_affected:
+        hi = _parse(last_affected)
+        if hi is None:
+            return None
+        return version <= hi
+    # No upper bound at all: genuinely open-ended, e.g. an unfixed advisory.
     return True
 
 
@@ -192,12 +215,15 @@ def assess(spec: str | None, ecosystem: str, affects: list[dict]) -> tuple[str, 
 
     undecidable = False
     for a in affects:
-        verdict = _in_range(parsed, a.get("introduced"), a.get("fixed"))
+        verdict = _in_range(parsed, a.get("introduced"), a.get("fixed"),
+                            a.get("last_affected"))
         if verdict is None:
             undecidable = True
         elif verdict:
-            lo, hi = a.get("introduced") or "0", a.get("fixed") or "unfixed"
-            return AFFECTED, f"{pinned} is within [{lo}, {hi})"
+            lo = a.get("introduced") or "0"
+            hi = a.get("fixed") or a.get("last_affected") or "unfixed"
+            close = ")" if a.get("fixed") or not a.get("last_affected") else "]"
+            return AFFECTED, f"{pinned} is within [{lo}, {hi}{close}"
     if undecidable:
         return INDETERMINATE, f"advisory bounds could not be compared to {pinned}"
     if listed:
@@ -249,14 +275,33 @@ def _affects_for(vuln: dict, name: str, osv_eco: str) -> list[dict]:
         versions = affected.get("versions") or []
         ranges = affected.get("ranges") or []
         if not ranges:
-            out.append({"introduced": None, "fixed": None, "versions": versions})
+            out.append({"introduced": None, "fixed": None,
+                        "last_affected": None, "versions": versions})
             continue
         for rng in ranges:
-            introduced = fixed = None
+            # One events list can describe SEVERAL disjoint intervals:
+            #   [{introduced: 0}, {fixed: 1.2}, {introduced: 2.0}, {fixed: 2.1}]
+            # means [0,1.2) and [2.0,2.1). Collapsing to the last introduced and
+            # the last fixed - which this did - silently merges them into one
+            # wrong interval, so each `introduced` opens a new one here.
+            current: dict | None = None
             for event in rng.get("events") or []:
-                introduced = event.get("introduced", introduced)
-                fixed = event.get("fixed", fixed)
-            out.append({"introduced": introduced, "fixed": fixed, "versions": versions})
+                if "introduced" in event:
+                    if current is not None:
+                        out.append({**current, "versions": versions})
+                    current = {"introduced": event["introduced"],
+                               "fixed": None, "last_affected": None}
+                    continue
+                if current is None:
+                    current = {"introduced": "0", "fixed": None, "last_affected": None}
+                if "fixed" in event:
+                    current["fixed"] = event["fixed"]
+                elif "last_affected" in event:
+                    current["last_affected"] = event["last_affected"]
+                elif "limit" in event:
+                    current["fixed"] = event["limit"]   # exclusive, like `fixed`
+            if current is not None:
+                out.append({**current, "versions": versions})
     return out
 
 
